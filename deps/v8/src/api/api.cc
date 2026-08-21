@@ -7581,6 +7581,13 @@ MaybeLocal<String> String::NewFromUtf8(Isolate* v8_isolate, const char* data,
   return result;
 }
 
+MaybeLocal<String> String::NewFromBytes(Isolate* v8_isolate,
+                                        const uint8_t* data, NewStringType type,
+                                        int length) {
+  NEW_STRING(v8_isolate, String, NewFromBytes, uint8_t, data, type, length);
+  return result;
+}
+
 MaybeLocal<String> String::NewFromOneByte(Isolate* v8_isolate,
                                           const uint8_t* data,
                                           NewStringType type, int length) {
@@ -11228,7 +11235,7 @@ String::ValueView::ValueView(v8::Isolate* v8_isolate,
     is_one_byte_ = flat_content.IsOneByte();
     length_ = flat_content.length();
     if (is_one_byte_) {
-      data8_ = flat_content.ToOneByteVector().data();
+      data8_ = flat_content.ToByteVector().data();
     } else {
       data16_ = flat_content.ToUC16Vector().data();
     }
@@ -11244,7 +11251,7 @@ String::ValueView::ValueView(v8::Isolate* v8_isolate,
     is_one_byte_ = flat_content.IsOneByte();
     length_ = flat_content.length();
     if (is_one_byte_) {
-      data8_ = flat_content.ToOneByteVector().data();
+      data8_ = flat_content.ToByteVector().data();
     } else {
       data16_ = flat_content.ToUC16Vector().data();
     }
