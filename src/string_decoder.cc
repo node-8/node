@@ -24,6 +24,11 @@ namespace node {
 
 namespace {
 
+bool UseNode8StringSemantics(Isolate* isolate) {
+  Environment* env = Environment::GetCurrent(isolate);
+  return env != nullptr && env->experimental_node_8_string_semantics();
+}
+
 MaybeLocal<String> MakeString(Isolate* isolate,
                               const char* data,
                               size_t length,
@@ -59,6 +64,21 @@ MaybeLocal<String> MakeString(Isolate* isolate,
 MaybeLocal<String> StringDecoder::DecodeData(Isolate* isolate,
                                              const char* data,
                                              size_t* nread_ptr) {
+  if (Encoding() == UTF8 && UseNode8StringSemantics(isolate)) {
+    DCHECK_EQ(MissingBytes(), 0);
+    DCHECK_EQ(BufferedBytes(), 0);
+
+    const size_t length = *nread_ptr;
+    if (length > static_cast<size_t>(String::kMaxLength)) {
+      isolate->ThrowException(node::ERR_STRING_TOO_LONG(isolate));
+      return MaybeLocal<String>();
+    }
+    return String::NewFromBytes(isolate,
+                                reinterpret_cast<const uint8_t*>(data),
+                                v8::NewStringType::kNormal,
+                                static_cast<int>(length));
+  }
+
   Local<String> prepend, body;
 
   size_t nread = *nread_ptr;
