@@ -38,3 +38,23 @@ Node-8-V8-Commit: <full V8 commit>
 After a successful roll, update `v8-roll.json` with the integrated V8 commit,
 the cumulative patch SHA-256, and the resulting `deps/v8` tree hash. Keep
 Node-specific integration commits separate from translated V8 commits.
+
+## String semantics contract
+
+Run the data-driven Buffer boundary matrix against the stock baseline:
+
+```sh
+out/Release/node tools/node-8/string-semantics.js stock
+```
+
+Run the same observations against the node-8 target contract:
+
+```sh
+out/Release/node tools/node-8/string-semantics.js node-8
+```
+
+Before the string implementation lands, the stock profile must pass and the
+node-8 profile must report the intentional differences. After implementation,
+the node-8 profile becomes a release-gate test. The matrix lives at
+`test/fixtures/node-8/string-semantics-buffer-to-string.json` and identifies
+the specification version and decision IDs it covers.
