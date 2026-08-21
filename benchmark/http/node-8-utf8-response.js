@@ -19,6 +19,7 @@ const bench = common.createBenchmark(main, {
     'h05-string-echo',
     'h06-stream-transform',
     'h07-json-api',
+    'h09-multi-write',
   ],
   corpus: CORPORA,
   size: [128, 1024, 16384, 262144],
@@ -29,7 +30,7 @@ const bench = common.createBenchmark(main, {
 });
 
 function main({ scenario, corpus, size, c, duration }) {
-  const server = createServer([{ corpus, size }]);
+  const server = createServer([{ corpus, size, scenario }]);
   server.listen(0, '127.0.0.1', () => {
     const options = {
       path: `/${scenario}/${corpus}/${size}`,

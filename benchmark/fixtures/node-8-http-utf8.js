@@ -5,6 +5,7 @@ const { StringDecoder } = require('string_decoder');
 
 const CORPORA = Object.freeze(['ascii', 'cjk', 'emoji', 'mixed']);
 const MAX_PAYLOAD_SIZE = 1024 * 1024;
+const MULTI_WRITE_CHUNK_SIZE = 64;
 const STREAM_DECODE_CHUNK_SIZE = 3;
 const jsonPrefix = Buffer.from('7b226d657373616765223a22', 'hex');
 const jsonSuffix = Buffer.from('227d', 'hex');
@@ -138,6 +139,18 @@ function createTemplatePayload(corpus, size) {
   return payload;
 }
 
+function createMultiWriteChunks(corpus, size) {
+  if (!Number.isSafeInteger(size) || size <= 0 || size > MAX_PAYLOAD_SIZE) {
+    throw new RangeError(`Invalid UTF-8 multi-write payload size: ${size}`);
+  }
+  const chunks = [];
+  for (let offset = 0; offset < size; offset += MULTI_WRITE_CHUNK_SIZE) {
+    chunks.push(createPayload(
+      corpus, Math.min(MULTI_WRITE_CHUNK_SIZE, size - offset)));
+  }
+  return chunks;
+}
+
 function sendError(res, statusCode, message) {
   const body = Buffer.from(message);
   res.writeHead(statusCode, {
@@ -150,19 +163,28 @@ function sendError(res, statusCode, message) {
 function createServer(preload = []) {
   const cache = new Map();
 
-  for (const { corpus, size } of preload) {
-    const buffer = createPayload(corpus, size);
-    cache.set(`${corpus}:${size}`, {
-      buffer,
-      string: buffer.toString('utf8'),
-    });
-    const template = createTemplatePayload(corpus, size);
-    cache.set(`h03:${corpus}:${size}`, {
-      body: template.subarray(
-        templatePrefix.length, size - templateSuffix.length).toString('utf8'),
-      prefix: '<p>',
-      suffix: '</p>',
-    });
+  for (const { corpus, size, scenario } of preload) {
+    if (scenario === 'h03-template-string') {
+      const template = createTemplatePayload(corpus, size);
+      cache.set(`h03:${corpus}:${size}`, {
+        body: template.subarray(
+          templatePrefix.length,
+          size - templateSuffix.length).toString('utf8'),
+        prefix: '<p>',
+        suffix: '</p>',
+      });
+    } else if (scenario === 'h09-multi-write') {
+      cache.set(`h09:${corpus}:${size}`, createMultiWriteChunks(corpus, size)
+        .map((chunk) => chunk.toString('utf8')));
+    } else if (scenario === undefined ||
+               scenario === 'h01-buffer' ||
+               scenario === 'h02-cached-string') {
+      const buffer = createPayload(corpus, size);
+      cache.set(`${corpus}:${size}`, {
+        buffer,
+        string: buffer.toString('utf8'),
+      });
+    }
   }
 
   return http.createServer((req, res) => {
@@ -178,7 +200,8 @@ function createServer(preload = []) {
          scenario !== 'h04-buffer-echo' &&
          scenario !== 'h05-string-echo' &&
          scenario !== 'h06-stream-transform' &&
-         scenario !== 'h07-json-api') ||
+         scenario !== 'h07-json-api' &&
+         scenario !== 'h09-multi-write') ||
         !patterns.has(corpus)) {
       sendError(res, 404, 'not found\n');
       return;
@@ -302,6 +325,23 @@ function createServer(preload = []) {
       return;
     }
 
+    if (scenario === 'h09-multi-write') {
+      const key = `h09:${corpus}:${size}`;
+      let chunks = cache.get(key);
+      if (chunks === undefined) {
+        chunks = createMultiWriteChunks(corpus, size)
+          .map((chunk) => chunk.toString('utf8'));
+        cache.set(key, chunks);
+      }
+      res.writeHead(200, {
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': size,
+      });
+      for (const chunk of chunks) res.write(chunk);
+      res.end();
+      return;
+    }
+
     const key = `${corpus}:${size}`;
     let payload = cache.get(key);
     if (payload === undefined) {
@@ -321,9 +361,11 @@ function createServer(preload = []) {
 module.exports = {
   CORPORA,
   MAX_PAYLOAD_SIZE,
+  MULTI_WRITE_CHUNK_SIZE,
   STREAM_DECODE_CHUNK_SIZE,
   createJsonPayload,
   createJsonResponse,
+  createMultiWriteChunks,
   createPayload,
   createServer,
   createStreamPayload,

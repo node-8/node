@@ -7,9 +7,11 @@ const http = require('http');
 const { isUtf8 } = require('buffer');
 const {
   CORPORA,
+  MULTI_WRITE_CHUNK_SIZE,
   STREAM_DECODE_CHUNK_SIZE,
   createJsonPayload,
   createJsonResponse,
+  createMultiWriteChunks,
   createPayload,
   createServer,
   createStreamPayload,
@@ -54,6 +56,7 @@ const sizes = [1, 2, 3, 4, 7, 128, 1024];
 const jsonSizes = [128, 1024, 16384];
 const streamSizes = [128, 1024, 16384];
 const templateSizes = [128, 1024, 16384];
+const multiWriteSizes = [128, 1024, 16384];
 for (const corpus of CORPORA) {
   for (const size of sizes) {
     const payload = createPayload(corpus, size);
@@ -77,6 +80,13 @@ for (const corpus of CORPORA) {
     assert.strictEqual(isUtf8(payload), true);
     assert.strictEqual(payload.subarray(0, 3).toString(), '<p>');
     assert.strictEqual(payload.subarray(size - 4).toString(), '</p>');
+  }
+  for (const size of multiWriteSizes) {
+    const chunks = createMultiWriteChunks(corpus, size);
+    assert.strictEqual(Buffer.concat(chunks).length, size);
+    assert.strictEqual(
+      chunks.length, Math.ceil(size / MULTI_WRITE_CHUNK_SIZE));
+    for (const chunk of chunks) assert.strictEqual(isUtf8(chunk), true);
   }
 }
 
@@ -121,6 +131,17 @@ server.listen(0, common.localhostIPv4, common.mustCall(async () => {
       assert.strictEqual(
         response.headers['content-length'], String(expected.length));
       assert.strictEqual(response.headers['content-type'], 'application/json');
+      assert.deepStrictEqual(response.body, expected);
+    }
+  }
+
+  for (const corpus of CORPORA) {
+    for (const size of multiWriteSizes) {
+      const expected = Buffer.concat(createMultiWriteChunks(corpus, size));
+      const response = await request(
+        port, `/h09-multi-write/${corpus}/${size}`);
+      assert.strictEqual(response.statusCode, 200);
+      assert.strictEqual(response.headers['content-length'], String(size));
       assert.deepStrictEqual(response.body, expected);
     }
   }
