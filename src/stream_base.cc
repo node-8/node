@@ -199,6 +199,7 @@ int StreamBase::Writev(const FunctionCallbackInfo<Value>& args) {
 
   size_t storage_size = 0;
   size_t offset;
+  bool all_strings = !all_buffers;
 
   if (!all_buffers) {
     // Determine storage size first
@@ -207,9 +208,11 @@ int StreamBase::Writev(const FunctionCallbackInfo<Value>& args) {
       if (!chunks->Get(context, i * 2).ToLocal(&chunk))
         return -1;
 
-      if (Buffer::HasInstance(chunk))
+      // Buffer chunk, no additional storage required.
+      if (Buffer::HasInstance(chunk)) {
+        all_strings = false;
         continue;
-        // Buffer chunk, no additional storage required
+      }
 
       // String chunk
       Local<String> string;
@@ -284,6 +287,12 @@ int StreamBase::Writev(const FunctionCallbackInfo<Value>& args) {
       bufs[i].len = str_size;
       offset += str_size;
     }
+  }
+
+  if (all_strings && count > 1 && offset > 0) {
+    bufs[0].base = static_cast<char*>(bs->Data());
+    bufs[0].len = offset;
+    count = 1;
   }
 
   StreamWriteResult res = Write(*bufs, count, nullptr, req_wrap_obj);
