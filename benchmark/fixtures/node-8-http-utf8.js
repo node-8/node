@@ -60,7 +60,9 @@ function createServer(preload = []) {
     const sizeText = parts[3];
 
     if (parts.length !== 4 ||
-        (scenario !== 'h01-buffer' && scenario !== 'h02-cached-string') ||
+        (scenario !== 'h01-buffer' &&
+         scenario !== 'h02-cached-string' &&
+         scenario !== 'h05-string-echo') ||
         !patterns.has(corpus)) {
       sendError(res, 404, 'not found\n');
       return;
@@ -74,6 +76,29 @@ function createServer(preload = []) {
     const size = Number(sizeText);
     if (!Number.isSafeInteger(size) || size <= 0 || size > MAX_PAYLOAD_SIZE) {
       sendError(res, 400, 'invalid size\n');
+      return;
+    }
+
+    if (scenario === 'h05-string-echo') {
+      if (req.method !== 'POST') {
+        sendError(res, 405, 'method not allowed\n');
+        return;
+      }
+      if (req.headers['content-length'] !== String(size)) {
+        sendError(res, 400, 'invalid content length\n');
+        return;
+      }
+
+      let body = '';
+      req.setEncoding('utf8');
+      req.on('data', (chunk) => body += chunk);
+      req.on('end', () => {
+        res.writeHead(200, {
+          'Content-Type': 'application/octet-stream',
+          'Content-Length': size,
+        });
+        res.end(body);
+      });
       return;
     }
 

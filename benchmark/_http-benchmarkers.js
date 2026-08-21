@@ -75,12 +75,24 @@ class WrkBenchmarker {
       '-d', duration,
       '-c', options.connections,
       '-t', Math.min(options.connections, require('os').availableParallelism() || 8),
-      `${scheme}://127.0.0.1:${options.port}${options.path}`,
     ];
+    if (options.script) {
+      args.push('-s', options.script);
+    }
     for (const field in options.headers) {
       args.push('-H', `${field}: ${options.headers[field]}`);
     }
-    const child = child_process.spawn(this.executable, args);
+    args.push(`${scheme}://127.0.0.1:${options.port}${options.path}`);
+
+    const env = { ...process.env, ...options.env };
+    if (options.method) {
+      env.NODE_HTTP_BENCHMARK_METHOD = options.method;
+    }
+    if (options.body !== undefined) {
+      env.NODE_HTTP_BENCHMARK_BODY_HEX =
+        Buffer.from(options.body).toString('hex');
+    }
+    const child = child_process.spawn(this.executable, args, { env });
     return child;
   }
 
@@ -114,8 +126,11 @@ class TestDoubleBenchmarker {
 
     const scheme = options.scheme || 'http';
     const env = {
-      test_url: `${scheme}://127.0.0.1:${options.port}${options.path}`,
       ...process.env,
+      test_url: `${scheme}://127.0.0.1:${options.port}${options.path}`,
+      test_method: options.method || 'GET',
+      test_body_hex: options.body === undefined ? '' :
+        Buffer.from(options.body).toString('hex'),
     };
 
     const child = child_process.fork(this.executable,

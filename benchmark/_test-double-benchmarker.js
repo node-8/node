@@ -14,6 +14,8 @@ const http = require(myModule);
 
 const duration = +process.env.duration;
 const url = process.env.test_url;
+const method = process.env.test_method || 'GET';
+const body = Buffer.from(process.env.test_body_hex || '', 'hex');
 
 const start = process.hrtime();
 let throughput = 0;
@@ -39,11 +41,8 @@ function request(res, client) {
 
 function run() {
   if (http.get) { // HTTP or HTTPS
-    if (options) {
-      http.get(url, options, request);
-    } else {
-      http.get(url, request);
-    }
+    const req = http.request(url, { ...options, method }, request);
+    req.end(body);
   } else { // HTTP/2
     const client = http.connect(url);
     client.on('error', () => {});

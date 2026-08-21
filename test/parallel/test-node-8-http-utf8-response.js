@@ -11,9 +11,20 @@ const {
   createServer,
 } = require('../../benchmark/fixtures/node-8-http-utf8.js');
 
-function request(port, path) {
+function request(port, path, options = {}) {
   return new Promise((resolve, reject) => {
-    const req = http.get({ host: common.localhostIPv4, port, path }, (res) => {
+    const body = options.body;
+    const headers = body === undefined ? undefined : {
+      'Content-Length': body.length,
+      'Content-Type': 'application/octet-stream',
+    };
+    const req = http.request({
+      host: common.localhostIPv4,
+      port,
+      path,
+      method: options.method || 'GET',
+      headers,
+    }, (res) => {
       const chunks = [];
       res.on('data', (chunk) => chunks.push(chunk));
       res.on('end', () => resolve({
@@ -23,6 +34,13 @@ function request(port, path) {
       }));
     });
     req.on('error', reject);
+    if (body !== undefined) {
+      const chunkSize = options.chunkSize || body.length;
+      for (let offset = 0; offset < body.length; offset += chunkSize) {
+        req.write(body.subarray(offset, offset + chunkSize));
+      }
+    }
+    req.end();
   });
 }
 
@@ -51,6 +69,22 @@ server.listen(0, common.localhostIPv4, common.mustCall(async () => {
       }
     }
   }
+
+  for (const corpus of CORPORA) {
+    for (const size of sizes) {
+      const expected = createPayload(corpus, size);
+      const response = await request(
+        port,
+        `/h05-string-echo/${corpus}/${size}`,
+        { body: expected, chunkSize: 3, method: 'POST' });
+      assert.strictEqual(response.statusCode, 200);
+      assert.strictEqual(response.headers['content-length'], String(size));
+      assert.deepStrictEqual(response.body, expected);
+    }
+  }
+
+  const wrongMethod = await request(port, '/h05-string-echo/mixed/128');
+  assert.strictEqual(wrongMethod.statusCode, 405);
 
   for (const path of [
     '/unknown/ascii/128',
