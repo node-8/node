@@ -7,6 +7,8 @@ const http = require('http');
 const { isUtf8 } = require('buffer');
 const {
   CORPORA,
+  createJsonPayload,
+  createJsonResponse,
   createPayload,
   createServer,
 } = require('../../benchmark/fixtures/node-8-http-utf8.js');
@@ -16,7 +18,7 @@ function request(port, path, options = {}) {
     const body = options.body;
     const headers = body === undefined ? undefined : {
       'Content-Length': body.length,
-      'Content-Type': 'application/octet-stream',
+      'Content-Type': options.contentType || 'application/octet-stream',
     };
     const req = http.request({
       host: common.localhostIPv4,
@@ -45,11 +47,18 @@ function request(port, path, options = {}) {
 }
 
 const sizes = [1, 2, 3, 4, 7, 128, 1024];
+const jsonSizes = [128, 1024, 16384];
 for (const corpus of CORPORA) {
   for (const size of sizes) {
     const payload = createPayload(corpus, size);
     assert.strictEqual(payload.length, size);
     assert.strictEqual(isUtf8(payload), true);
+  }
+  for (const size of jsonSizes) {
+    const payload = createJsonPayload(corpus, size);
+    assert.strictEqual(payload.length, size);
+    assert.strictEqual(isUtf8(payload), true);
+    assert.strictEqual(JSON.parse(payload.toString()).message.length > 0, true);
   }
 }
 
@@ -70,6 +79,27 @@ server.listen(0, common.localhostIPv4, common.mustCall(async () => {
     }
   }
 
+  for (const corpus of CORPORA) {
+    for (const size of jsonSizes) {
+      const body = createJsonPayload(corpus, size);
+      const expected = createJsonResponse(corpus, size);
+      const response = await request(
+        port,
+        `/h07-json-api/${corpus}/${size}`,
+        {
+          body,
+          chunkSize: 3,
+          contentType: 'application/json',
+          method: 'POST',
+        });
+      assert.strictEqual(response.statusCode, 200);
+      assert.strictEqual(
+        response.headers['content-length'], String(expected.length));
+      assert.strictEqual(response.headers['content-type'], 'application/json');
+      assert.deepStrictEqual(response.body, expected);
+    }
+  }
+
   for (const scenario of ['h04-buffer-echo', 'h05-string-echo']) {
     for (const corpus of CORPORA) {
       for (const size of sizes) {
@@ -85,7 +115,11 @@ server.listen(0, common.localhostIPv4, common.mustCall(async () => {
     }
   }
 
-  for (const scenario of ['h04-buffer-echo', 'h05-string-echo']) {
+  for (const scenario of [
+    'h04-buffer-echo',
+    'h05-string-echo',
+    'h07-json-api',
+  ]) {
     const wrongMethod = await request(port, `/${scenario}/mixed/128`);
     assert.strictEqual(wrongMethod.statusCode, 405);
   }

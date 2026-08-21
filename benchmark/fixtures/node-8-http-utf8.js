@@ -4,6 +4,9 @@ const http = require('http');
 
 const CORPORA = Object.freeze(['ascii', 'cjk', 'emoji', 'mixed']);
 const MAX_PAYLOAD_SIZE = 1024 * 1024;
+const jsonPrefix = Buffer.from('7b226d657373616765223a22', 'hex');
+const jsonSuffix = Buffer.from('227d', 'hex');
+const jsonResponseSuffix = Buffer.from('2c22636f756e74223a317d', 'hex');
 const patterns = new Map([
   ['ascii', Buffer.from('7b226d657373616765223a2268656c6c6f227d0a', 'hex')],
   ['cjk', Buffer.from('e4b8ade69687', 'hex')],
@@ -12,6 +15,12 @@ const patterns = new Map([
     'mixed',
     Buffer.from('7b226d223a22e4b8ade69687c3a9f09f9880227d0a', 'hex'),
   ],
+]);
+const jsonValuePatterns = new Map([
+  ['ascii', Buffer.from('abcdef', 'ascii')],
+  ['cjk', Buffer.from('e4b8ade69687', 'hex')],
+  ['emoji', Buffer.from('f09f9880f09f9a80', 'hex')],
+  ['mixed', Buffer.from('61e4b8ade69687c3a9f09f9880', 'hex')],
 ]);
 
 function createPayload(corpus, size) {
@@ -31,6 +40,39 @@ function createPayload(corpus, size) {
   }
   payload.fill(0x61, offset);
   return payload;
+}
+
+function createJsonPayload(corpus, size) {
+  const pattern = jsonValuePatterns.get(corpus);
+  if (pattern === undefined) {
+    throw new TypeError(`Unsupported UTF-8 corpus: ${corpus}`);
+  }
+  const minimumSize = jsonPrefix.length + pattern.length + jsonSuffix.length;
+  if (!Number.isSafeInteger(size) ||
+      size < minimumSize ||
+      size > MAX_PAYLOAD_SIZE) {
+    throw new RangeError(`Invalid UTF-8 JSON payload size: ${size}`);
+  }
+
+  const payload = Buffer.allocUnsafe(size);
+  jsonPrefix.copy(payload, 0);
+  const valueEnd = size - jsonSuffix.length;
+  let offset = jsonPrefix.length;
+  while (offset + pattern.length <= valueEnd) {
+    pattern.copy(payload, offset);
+    offset += pattern.length;
+  }
+  payload.fill(0x61, offset, valueEnd);
+  jsonSuffix.copy(payload, valueEnd);
+  return payload;
+}
+
+function createJsonResponse(corpus, size) {
+  const request = createJsonPayload(corpus, size);
+  return Buffer.concat([
+    request.subarray(0, request.length - 1),
+    jsonResponseSuffix,
+  ]);
 }
 
 function sendError(res, statusCode, message) {
@@ -63,7 +105,8 @@ function createServer(preload = []) {
         (scenario !== 'h01-buffer' &&
          scenario !== 'h02-cached-string' &&
          scenario !== 'h04-buffer-echo' &&
-         scenario !== 'h05-string-echo') ||
+         scenario !== 'h05-string-echo' &&
+         scenario !== 'h07-json-api') ||
         !patterns.has(corpus)) {
       sendError(res, 404, 'not found\n');
       return;
@@ -80,7 +123,9 @@ function createServer(preload = []) {
       return;
     }
 
-    if (scenario === 'h04-buffer-echo' || scenario === 'h05-string-echo') {
+    if (scenario === 'h04-buffer-echo' ||
+        scenario === 'h05-string-echo' ||
+        scenario === 'h07-json-api') {
       if (req.method !== 'POST') {
         sendError(res, 405, 'method not allowed\n');
         return;
@@ -114,6 +159,23 @@ function createServer(preload = []) {
       return;
     }
 
+    if (scenario === 'h07-json-api') {
+      let body = '';
+      req.setEncoding('utf8');
+      req.on('data', (chunk) => body += chunk);
+      req.on('end', () => {
+        const value = JSON.parse(body);
+        value.count = 1;
+        const result = JSON.stringify(value);
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(result, 'utf8'),
+        });
+        res.end(result);
+      });
+      return;
+    }
+
     const key = `${corpus}:${size}`;
     let payload = cache.get(key);
     if (payload === undefined) {
@@ -133,6 +195,8 @@ function createServer(preload = []) {
 module.exports = {
   CORPORA,
   MAX_PAYLOAD_SIZE,
+  createJsonPayload,
+  createJsonResponse,
   createPayload,
   createServer,
 };

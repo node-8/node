@@ -4,6 +4,7 @@ const common = require('../common.js');
 const path = require('path');
 const {
   CORPORA,
+  createJsonPayload,
   createPayload,
   createServer,
 } = require('../fixtures/node-8-http-utf8.js');
@@ -14,6 +15,7 @@ const bench = common.createBenchmark(main, {
     'h02-cached-string',
     'h04-buffer-echo',
     'h05-string-echo',
+    'h07-json-api',
   ],
   corpus: CORPORA,
   size: [128, 1024, 16384, 262144],
@@ -30,9 +32,16 @@ function main({ scenario, corpus, size, c, duration }) {
       duration,
       port: server.address().port,
     };
-    if (scenario === 'h04-buffer-echo' || scenario === 'h05-string-echo') {
+    if (scenario === 'h04-buffer-echo' ||
+        scenario === 'h05-string-echo' ||
+        scenario === 'h07-json-api') {
       options.method = 'POST';
-      options.body = createPayload(corpus, size);
+      options.body = scenario === 'h07-json-api' ?
+        createJsonPayload(corpus, size) : createPayload(corpus, size);
+      options.env = {
+        NODE_HTTP_BENCHMARK_CONTENT_TYPE: scenario === 'h07-json-api' ?
+          'application/json' : 'application/octet-stream',
+      };
       options.script = path.resolve(
         __dirname, '../fixtures/node-8-http-post.lua');
     }

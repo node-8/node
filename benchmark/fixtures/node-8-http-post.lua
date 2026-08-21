@@ -8,5 +8,6 @@ end
 
 wrk.method = os.getenv("NODE_HTTP_BENCHMARK_METHOD") or "POST"
 wrk.body = decode_hex(os.getenv("NODE_HTTP_BENCHMARK_BODY_HEX") or "")
-wrk.headers["Content-Type"] = "application/octet-stream"
+wrk.headers["Content-Type"] =
+  os.getenv("NODE_HTTP_BENCHMARK_CONTENT_TYPE") or "application/octet-stream"
 wrk.headers["Content-Length"] = tostring(#wrk.body)
