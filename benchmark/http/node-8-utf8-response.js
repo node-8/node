@@ -14,6 +14,7 @@ const bench = common.createBenchmark(main, {
   scenario: [
     'h01-buffer',
     'h02-cached-string',
+    'h03-template-string',
     'h04-buffer-echo',
     'h05-string-echo',
     'h06-stream-transform',
@@ -23,6 +24,8 @@ const bench = common.createBenchmark(main, {
   size: [128, 1024, 16384, 262144],
   c: [1, 50],
   duration: 10,
+}, {
+  test: { size: 128 },
 });
 
 function main({ scenario, corpus, size, c, duration }) {

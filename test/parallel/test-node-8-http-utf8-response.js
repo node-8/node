@@ -14,6 +14,7 @@ const {
   createServer,
   createStreamPayload,
   createStreamResponse,
+  createTemplatePayload,
 } = require('../../benchmark/fixtures/node-8-http-utf8.js');
 
 function request(port, path, options = {}) {
@@ -52,6 +53,7 @@ function request(port, path, options = {}) {
 const sizes = [1, 2, 3, 4, 7, 128, 1024];
 const jsonSizes = [128, 1024, 16384];
 const streamSizes = [128, 1024, 16384];
+const templateSizes = [128, 1024, 16384];
 for (const corpus of CORPORA) {
   for (const size of sizes) {
     const payload = createPayload(corpus, size);
@@ -68,6 +70,13 @@ for (const corpus of CORPORA) {
     const payload = createStreamPayload(corpus, size);
     assert.strictEqual(payload.length, size);
     assert.strictEqual(isUtf8(payload), true);
+  }
+  for (const size of templateSizes) {
+    const payload = createTemplatePayload(corpus, size);
+    assert.strictEqual(payload.length, size);
+    assert.strictEqual(isUtf8(payload), true);
+    assert.strictEqual(payload.subarray(0, 3).toString(), '<p>');
+    assert.strictEqual(payload.subarray(size - 4).toString(), '</p>');
   }
 }
 
@@ -112,6 +121,18 @@ server.listen(0, common.localhostIPv4, common.mustCall(async () => {
       assert.strictEqual(
         response.headers['content-length'], String(expected.length));
       assert.strictEqual(response.headers['content-type'], 'application/json');
+      assert.deepStrictEqual(response.body, expected);
+    }
+  }
+
+  for (const corpus of CORPORA) {
+    for (const size of templateSizes) {
+      const expected = createTemplatePayload(corpus, size);
+      const response = await request(
+        port, `/h03-template-string/${corpus}/${size}`);
+      assert.strictEqual(response.statusCode, 200);
+      assert.strictEqual(response.headers['content-length'], String(size));
+      assert.strictEqual(response.headers['content-type'], 'text/html');
       assert.deepStrictEqual(response.body, expected);
     }
   }

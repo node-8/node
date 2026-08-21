@@ -11,6 +11,8 @@ const jsonSuffix = Buffer.from('227d', 'hex');
 const jsonResponseSuffix = Buffer.from('2c22636f756e74223a317d', 'hex');
 const streamPrefix = Buffer.from('discard|', 'ascii');
 const streamSuffix = Buffer.from('|discard', 'ascii');
+const templatePrefix = Buffer.from('<p>', 'ascii');
+const templateSuffix = Buffer.from('</p>', 'ascii');
 const patterns = new Map([
   ['ascii', Buffer.from('7b226d657373616765223a2268656c6c6f227d0a', 'hex')],
   ['cjk', Buffer.from('e4b8ade69687', 'hex')],
@@ -110,6 +112,32 @@ function createStreamResponse(corpus, size) {
   return request.subarray(streamPrefix.length, size - streamSuffix.length);
 }
 
+function createTemplatePayload(corpus, size) {
+  const pattern = jsonValuePatterns.get(corpus);
+  if (pattern === undefined) {
+    throw new TypeError(`Unsupported UTF-8 corpus: ${corpus}`);
+  }
+  const minimumSize =
+    templatePrefix.length + pattern.length + templateSuffix.length;
+  if (!Number.isSafeInteger(size) ||
+      size < minimumSize ||
+      size > MAX_PAYLOAD_SIZE) {
+    throw new RangeError(`Invalid UTF-8 template payload size: ${size}`);
+  }
+
+  const payload = Buffer.allocUnsafe(size);
+  templatePrefix.copy(payload, 0);
+  const valueEnd = size - templateSuffix.length;
+  let offset = templatePrefix.length;
+  while (offset + pattern.length <= valueEnd) {
+    pattern.copy(payload, offset);
+    offset += pattern.length;
+  }
+  payload.fill(0x61, offset, valueEnd);
+  templateSuffix.copy(payload, valueEnd);
+  return payload;
+}
+
 function sendError(res, statusCode, message) {
   const body = Buffer.from(message);
   res.writeHead(statusCode, {
@@ -128,6 +156,13 @@ function createServer(preload = []) {
       buffer,
       string: buffer.toString('utf8'),
     });
+    const template = createTemplatePayload(corpus, size);
+    cache.set(`h03:${corpus}:${size}`, {
+      body: template.subarray(
+        templatePrefix.length, size - templateSuffix.length).toString('utf8'),
+      prefix: '<p>',
+      suffix: '</p>',
+    });
   }
 
   return http.createServer((req, res) => {
@@ -139,6 +174,7 @@ function createServer(preload = []) {
     if (parts.length !== 4 ||
         (scenario !== 'h01-buffer' &&
          scenario !== 'h02-cached-string' &&
+         scenario !== 'h03-template-string' &&
          scenario !== 'h04-buffer-echo' &&
          scenario !== 'h05-string-echo' &&
          scenario !== 'h06-stream-transform' &&
@@ -243,6 +279,29 @@ function createServer(preload = []) {
       return;
     }
 
+    if (scenario === 'h03-template-string') {
+      const key = `h03:${corpus}:${size}`;
+      let pieces = cache.get(key);
+      if (pieces === undefined) {
+        const template = createTemplatePayload(corpus, size);
+        pieces = {
+          body: template.subarray(
+            templatePrefix.length,
+            size - templateSuffix.length).toString('utf8'),
+          prefix: '<p>',
+          suffix: '</p>',
+        };
+        cache.set(key, pieces);
+      }
+      const result = pieces.prefix + pieces.body + pieces.suffix;
+      res.writeHead(200, {
+        'Content-Type': 'text/html',
+        'Content-Length': size,
+      });
+      res.end(result);
+      return;
+    }
+
     const key = `${corpus}:${size}`;
     let payload = cache.get(key);
     if (payload === undefined) {
@@ -269,4 +328,5 @@ module.exports = {
   createServer,
   createStreamPayload,
   createStreamResponse,
+  createTemplatePayload,
 };
