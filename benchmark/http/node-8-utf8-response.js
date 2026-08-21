@@ -9,7 +9,12 @@ const {
 } = require('../fixtures/node-8-http-utf8.js');
 
 const bench = common.createBenchmark(main, {
-  scenario: ['h01-buffer', 'h02-cached-string', 'h05-string-echo'],
+  scenario: [
+    'h01-buffer',
+    'h02-cached-string',
+    'h04-buffer-echo',
+    'h05-string-echo',
+  ],
   corpus: CORPORA,
   size: [128, 1024, 16384, 262144],
   c: [1, 50],
@@ -25,7 +30,7 @@ function main({ scenario, corpus, size, c, duration }) {
       duration,
       port: server.address().port,
     };
-    if (scenario === 'h05-string-echo') {
+    if (scenario === 'h04-buffer-echo' || scenario === 'h05-string-echo') {
       options.method = 'POST';
       options.body = createPayload(corpus, size);
       options.script = path.resolve(

@@ -70,21 +70,25 @@ server.listen(0, common.localhostIPv4, common.mustCall(async () => {
     }
   }
 
-  for (const corpus of CORPORA) {
-    for (const size of sizes) {
-      const expected = createPayload(corpus, size);
-      const response = await request(
-        port,
-        `/h05-string-echo/${corpus}/${size}`,
-        { body: expected, chunkSize: 3, method: 'POST' });
-      assert.strictEqual(response.statusCode, 200);
-      assert.strictEqual(response.headers['content-length'], String(size));
-      assert.deepStrictEqual(response.body, expected);
+  for (const scenario of ['h04-buffer-echo', 'h05-string-echo']) {
+    for (const corpus of CORPORA) {
+      for (const size of sizes) {
+        const expected = createPayload(corpus, size);
+        const response = await request(
+          port,
+          `/${scenario}/${corpus}/${size}`,
+          { body: expected, chunkSize: 3, method: 'POST' });
+        assert.strictEqual(response.statusCode, 200);
+        assert.strictEqual(response.headers['content-length'], String(size));
+        assert.deepStrictEqual(response.body, expected);
+      }
     }
   }
 
-  const wrongMethod = await request(port, '/h05-string-echo/mixed/128');
-  assert.strictEqual(wrongMethod.statusCode, 405);
+  for (const scenario of ['h04-buffer-echo', 'h05-string-echo']) {
+    const wrongMethod = await request(port, `/${scenario}/mixed/128`);
+    assert.strictEqual(wrongMethod.statusCode, 405);
+  }
 
   for (const path of [
     '/unknown/ascii/128',

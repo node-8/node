@@ -62,6 +62,7 @@ function createServer(preload = []) {
     if (parts.length !== 4 ||
         (scenario !== 'h01-buffer' &&
          scenario !== 'h02-cached-string' &&
+         scenario !== 'h04-buffer-echo' &&
          scenario !== 'h05-string-echo') ||
         !patterns.has(corpus)) {
       sendError(res, 404, 'not found\n');
@@ -79,7 +80,7 @@ function createServer(preload = []) {
       return;
     }
 
-    if (scenario === 'h05-string-echo') {
+    if (scenario === 'h04-buffer-echo' || scenario === 'h05-string-echo') {
       if (req.method !== 'POST') {
         sendError(res, 405, 'method not allowed\n');
         return;
@@ -88,7 +89,18 @@ function createServer(preload = []) {
         sendError(res, 400, 'invalid content length\n');
         return;
       }
+    }
 
+    if (scenario === 'h04-buffer-echo') {
+      res.writeHead(200, {
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': size,
+      });
+      req.pipe(res);
+      return;
+    }
+
+    if (scenario === 'h05-string-echo') {
       let body = '';
       req.setEncoding('utf8');
       req.on('data', (chunk) => body += chunk);
