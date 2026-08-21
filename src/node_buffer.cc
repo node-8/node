@@ -590,6 +590,17 @@ void StringSlice(const FunctionCallbackInfo<Value>& args) {
     start = 0;
   }
 
+  if constexpr (encoding == UTF8) {
+    if (env->experimental_node_8_string_semantics()) {
+      Local<Value> ret;
+      if (StringBytes::Encode(isolate, data_ptr + start, length, LATIN1)
+              .ToLocal(&ret)) {
+        args.GetReturnValue().Set(ret);
+      }
+      return;
+    }
+  }
+
   Local<Value> ret;
   if (StringBytes::Encode(isolate, data_ptr + start, length, encoding)
           .ToLocal(&ret)) {

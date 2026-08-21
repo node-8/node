@@ -656,6 +656,10 @@ EnvironmentOptionsParser::EnvironmentOptionsParser() {
             "experimental ES Module import.meta.resolve() parentURL support",
             &EnvironmentOptions::experimental_import_meta_resolve,
             kAllowedInEnvvar);
+  AddOption("--experimental-node-8-string-semantics",
+            "use byte-preserving node-8 String semantics",
+            &EnvironmentOptions::experimental_node_8_string_semantics,
+            kDisallowedInEnvvar);
   AddOption("--permission",
             "enable the permission system",
             &EnvironmentOptions::permission,

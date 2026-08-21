@@ -736,6 +736,7 @@ class Environment final : public MemoryRetainer {
 
   inline void set_force_context_aware(bool value);
   inline bool force_context_aware() const;
+  inline bool experimental_node_8_string_semantics() const;
 
   // This contains fields that are a pseudo-boolean that keeps track of whether
   // the process is exiting, an integer representing the process exit code, and

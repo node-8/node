@@ -346,6 +346,10 @@ inline bool Environment::force_context_aware() const {
   return options_->force_context_aware;
 }
 
+inline bool Environment::experimental_node_8_string_semantics() const {
+  return options_->experimental_node_8_string_semantics;
+}
+
 inline void Environment::set_exiting(bool value) {
   exit_info_[kExiting] = value ? 1 : 0;
 }

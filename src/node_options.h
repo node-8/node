@@ -140,6 +140,7 @@ class EnvironmentOptions : public Options {
   bool experimental_global_web_crypto = true;
   bool experimental_import_text = EXPERIMENTALS_DEFAULT_VALUE;
   bool experimental_import_meta_resolve = EXPERIMENTALS_DEFAULT_VALUE;
+  bool experimental_node_8_string_semantics = false;
   std::string input_type;  // Value of --input-type
   bool entry_is_url = false;
   bool permission = false;

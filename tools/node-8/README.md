@@ -50,11 +50,12 @@ out/Release/node tools/node-8/string-semantics.js stock
 Run the same observations against the node-8 target contract:
 
 ```sh
-out/Release/node tools/node-8/string-semantics.js node-8
+out/Release/node --experimental-node-8-string-semantics \
+  tools/node-8/string-semantics.js node-8
 ```
 
-Before the string implementation lands, the stock profile must pass and the
-node-8 profile must report the intentional differences. After implementation,
-the node-8 profile becomes a release-gate test. The matrix lives at
-`test/fixtures/node-8/string-semantics-buffer-to-string.json` and identifies
-the specification version and decision IDs it covers.
+The stock profile must pass without the flag, and the node-8 profile must pass
+with the flag. The current prototype uses V8's existing one-byte string storage
+to expose the byte semantics without changing the V8 object layout. The matrix
+lives at `test/fixtures/node-8/string-semantics-buffer-to-string.json` and
+identifies the specification version and decision IDs it covers.
