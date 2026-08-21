@@ -592,8 +592,16 @@ void StringSlice(const FunctionCallbackInfo<Value>& args) {
 
   if constexpr (encoding == UTF8) {
     if (env->experimental_node_8_string_semantics()) {
-      Local<Value> ret;
-      if (StringBytes::Encode(isolate, data_ptr + start, length, LATIN1)
+      if (length > static_cast<size_t>(String::kMaxLength)) {
+        isolate->ThrowException(ERR_STRING_TOO_LONG(isolate));
+        return;
+      }
+      Local<String> ret;
+      if (String::NewFromBytes(
+              isolate,
+              reinterpret_cast<const uint8_t*>(data_ptr + start),
+              v8::NewStringType::kNormal,
+              static_cast<int>(length))
               .ToLocal(&ret)) {
         args.GetReturnValue().Set(ret);
       }
@@ -817,8 +825,14 @@ void StringWrite(const FunctionCallbackInfo<Value>& args) {
 
 void SlowByteLengthUtf8(const FunctionCallbackInfo<Value>& args) {
   CHECK(args[0]->IsString());
-  Isolate* isolate = args.GetIsolate();
+  Environment* env = Environment::GetCurrent(args);
+  Isolate* isolate = env->isolate();
   Local<String> str = args[0].As<String>();
+
+  if (env->experimental_node_8_string_semantics() && str->IsOneByte()) {
+    args.GetReturnValue().Set(static_cast<uint64_t>(str->Length()));
+    return;
+  }
 
   // Below ~512 units, or for one-byte, V8's Utf8LengthV2 is faster.
   if (str->Length() >= 512 && !str->IsOneByte()) {
@@ -845,6 +859,12 @@ uint32_t FastByteLengthUtf8(
   HandleScope handleScope(isolate);
   CHECK(sourceValue->IsString());
   Local<String> sourceStr = sourceValue.As<String>();
+
+  Environment* env = Environment::GetCurrent(isolate);
+  if (env != nullptr && env->experimental_node_8_string_semantics() &&
+      sourceStr->IsOneByte()) {
+    return sourceStr->Length();
+  }
 
   if (!sourceStr->IsExternalOneByte()) {
     // Below ~512 units, or for one-byte, V8's Utf8LengthV2 is faster.
@@ -1747,8 +1767,10 @@ void SlowWriteString(const FunctionCallbackInfo<Value>& args) {
 
   uint32_t written = 0;
 
+  const bool use_node_8_bytes =
+      encoding == UTF8 && env->experimental_node_8_string_semantics();
   if ((encoding == UTF8 || encoding == LATIN1 || encoding == ASCII) &&
-      str->IsExternalOneByte()) {
+      str->IsExternalOneByte() && !use_node_8_bytes) {
     const auto src = str->GetExternalOneByteStringResource();
     written = WriteOneByteString<encoding>(
         src->data(), src->length(), ts_obj_data + offset, max_length);
@@ -1781,6 +1803,16 @@ uint32_t FastWriteString(Local<Value> receiver,
   CHECK(offset <= dst_length);
   CHECK(dst_length - offset <= std::numeric_limits<uint32_t>::max());
   TRACK_V8_FAST_API_CALL("buffer.writeString");
+
+  if constexpr (encoding == UTF8) {
+    Environment* env = Environment::GetCurrent(options.isolate);
+    if (env != nullptr && env->experimental_node_8_string_semantics()) {
+      const uint32_t size = std::min<uint32_t>(
+          src.length, std::min<uint32_t>(dst_length - offset, max_length));
+      memcpy(dst_data + offset, src.data, size);
+      return size;
+    }
+  }
 
   return WriteOneByteString<encoding>(
       src.data,

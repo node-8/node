@@ -54,6 +54,11 @@ using v8::Value;
 
 namespace {
 
+bool UseNode8StringSemantics(Isolate* isolate) {
+  Environment* env = Environment::GetCurrent(isolate);
+  return env != nullptr && env->experimental_node_8_string_semantics();
+}
+
 template <typename ResourceType, typename TypeName>
 class ExternString: public ResourceType {
  public:
@@ -282,6 +287,7 @@ size_t StringBytes::Write(Isolate* isolate,
   buflen = keep_buflen_in_range(buflen);
   CHECK(val->IsString() == true);
   Local<String> str = val.As<String>();
+  const bool use_node_8_string_semantics = UseNode8StringSemantics(isolate);
   String::ValueView input_view(isolate, str);
 
   switch (encoding) {
@@ -303,7 +309,11 @@ size_t StringBytes::Write(Isolate* isolate,
 
     case BUFFER:
     case UTF8:
-      if (input_view.is_one_byte()) {
+      if (encoding == UTF8 && use_node_8_string_semantics &&
+          input_view.is_one_byte()) {
+        nbytes = std::min(buflen, static_cast<size_t>(input_view.length()));
+        memcpy(buf, input_view.bytes(), nbytes);
+      } else if (input_view.is_one_byte()) {
         // Use simdutf for one-byte strings instead of V8's WriteUtf8V2.
         nbytes = simdutf::convert_latin1_to_utf8_safe(
             reinterpret_cast<const char*>(input_view.data8()),
@@ -441,6 +451,7 @@ Maybe<size_t> StringBytes::StorageSize(Isolate* isolate,
   Local<String> str;
   if (!val->ToString(isolate->GetCurrentContext()).ToLocal(&str))
     return Nothing<size_t>();
+  const bool use_node_8_string_semantics = UseNode8StringSemantics(isolate);
   String::ValueView view(isolate, str);
   size_t data_size = 0;
 
@@ -452,10 +463,15 @@ Maybe<size_t> StringBytes::StorageSize(Isolate* isolate,
 
     case BUFFER:
     case UTF8:
-      // A single UCS2 codepoint never takes up more than 3 utf8 bytes.
-      // It is an exercise for the caller to decide when a string is
-      // long enough to justify calling Size() instead of StorageSize()
-      data_size = 3 * view.length();
+      if (encoding == UTF8 && use_node_8_string_semantics &&
+          view.is_one_byte()) {
+        data_size = view.length();
+      } else {
+        // A single UCS2 codepoint never takes up more than 3 utf8 bytes.
+        // It is an exercise for the caller to decide when a string is
+        // long enough to justify calling Size() instead of StorageSize()
+        data_size = 3 * view.length();
+      }
       break;
 
     case UCS2:
@@ -493,6 +509,7 @@ Maybe<size_t> StringBytes::Size(Isolate* isolate,
   Local<String> str;
   if (!val->ToString(isolate->GetCurrentContext()).ToLocal(&str))
     return Nothing<size_t>();
+  const bool use_node_8_string_semantics = UseNode8StringSemantics(isolate);
   String::ValueView view(isolate, str);
 
   switch (encoding) {
@@ -502,6 +519,10 @@ Maybe<size_t> StringBytes::Size(Isolate* isolate,
 
     case BUFFER:
     case UTF8:
+      if (encoding == UTF8 && use_node_8_string_semantics &&
+          view.is_one_byte()) {
+        return Just<size_t>(view.length());
+      }
       if (view.is_one_byte()) {
         return Just<size_t>(simdutf::utf8_length_from_latin1(
             reinterpret_cast<const char*>(view.data8()), view.length()));

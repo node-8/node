@@ -36,3 +36,29 @@ new Uint8Array(shared).set([0xe4, 0xb8, 0xad]);
 assert.deepStrictEqual(
   observe(Buffer.from(shared).toString('utf8')),
   { length: 3, units: [0xe4, 0xb8, 0xad] });
+
+for (const inputHex of [
+  '',
+  '616263',
+  'e4b8ad',
+  'f09f9880',
+  '610062',
+  'e228a1',
+  'ff',
+  '00e4b8ade228a1ff',
+]) {
+  const value = Buffer.from(inputHex, 'hex').toString('utf8');
+  const expectedLength = inputHex.length / 2;
+
+  assert.strictEqual(Buffer.byteLength(value, 'utf8'), expectedLength,
+                     inputHex);
+  assert.strictEqual(Buffer.from(value, 'utf8').toString('hex'), inputHex);
+
+  const output = Buffer.alloc(expectedLength);
+  assert.strictEqual(output.write(value, 0, output.length, 'utf8'),
+                     expectedLength, inputHex);
+  assert.strictEqual(output.toString('hex'), inputHex);
+}
+
+const sliced = Buffer.from('00e4b8adff', 'hex').toString('utf8', 1, 4);
+assert.strictEqual(Buffer.from(sliced, 'utf8').toString('hex'), 'e4b8ad');
