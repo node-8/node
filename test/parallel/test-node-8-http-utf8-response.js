@@ -7,10 +7,13 @@ const http = require('http');
 const { isUtf8 } = require('buffer');
 const {
   CORPORA,
+  STREAM_DECODE_CHUNK_SIZE,
   createJsonPayload,
   createJsonResponse,
   createPayload,
   createServer,
+  createStreamPayload,
+  createStreamResponse,
 } = require('../../benchmark/fixtures/node-8-http-utf8.js');
 
 function request(port, path, options = {}) {
@@ -48,6 +51,7 @@ function request(port, path, options = {}) {
 
 const sizes = [1, 2, 3, 4, 7, 128, 1024];
 const jsonSizes = [128, 1024, 16384];
+const streamSizes = [128, 1024, 16384];
 for (const corpus of CORPORA) {
   for (const size of sizes) {
     const payload = createPayload(corpus, size);
@@ -60,6 +64,18 @@ for (const corpus of CORPORA) {
     assert.strictEqual(isUtf8(payload), true);
     assert.strictEqual(JSON.parse(payload.toString()).message.length > 0, true);
   }
+  for (const size of streamSizes) {
+    const payload = createStreamPayload(corpus, size);
+    assert.strictEqual(payload.length, size);
+    assert.strictEqual(isUtf8(payload), true);
+  }
+}
+
+for (const corpus of ['cjk', 'emoji', 'mixed']) {
+  const payload = createStreamPayload(corpus, 128);
+  const splitsSequence = payload.some((byte, offset) =>
+    offset % STREAM_DECODE_CHUNK_SIZE === 0 && (byte & 0xc0) === 0x80);
+  assert.strictEqual(splitsSequence, true);
 }
 
 const server = createServer();
@@ -100,6 +116,21 @@ server.listen(0, common.localhostIPv4, common.mustCall(async () => {
     }
   }
 
+  for (const corpus of CORPORA) {
+    for (const size of streamSizes) {
+      const body = createStreamPayload(corpus, size);
+      const expected = createStreamResponse(corpus, size);
+      const response = await request(
+        port,
+        `/h06-stream-transform/${corpus}/${size}`,
+        { body, chunkSize: 5, method: 'POST' });
+      assert.strictEqual(response.statusCode, 200);
+      assert.strictEqual(
+        response.headers['content-length'], String(expected.length));
+      assert.deepStrictEqual(response.body, expected);
+    }
+  }
+
   for (const scenario of ['h04-buffer-echo', 'h05-string-echo']) {
     for (const corpus of CORPORA) {
       for (const size of sizes) {
@@ -118,6 +149,7 @@ server.listen(0, common.localhostIPv4, common.mustCall(async () => {
   for (const scenario of [
     'h04-buffer-echo',
     'h05-string-echo',
+    'h06-stream-transform',
     'h07-json-api',
   ]) {
     const wrongMethod = await request(port, `/${scenario}/mixed/128`);

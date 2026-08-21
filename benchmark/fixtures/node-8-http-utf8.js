@@ -1,12 +1,16 @@
 'use strict';
 
 const http = require('http');
+const { StringDecoder } = require('string_decoder');
 
 const CORPORA = Object.freeze(['ascii', 'cjk', 'emoji', 'mixed']);
 const MAX_PAYLOAD_SIZE = 1024 * 1024;
+const STREAM_DECODE_CHUNK_SIZE = 3;
 const jsonPrefix = Buffer.from('7b226d657373616765223a22', 'hex');
 const jsonSuffix = Buffer.from('227d', 'hex');
 const jsonResponseSuffix = Buffer.from('2c22636f756e74223a317d', 'hex');
+const streamPrefix = Buffer.from('discard|', 'ascii');
+const streamSuffix = Buffer.from('|discard', 'ascii');
 const patterns = new Map([
   ['ascii', Buffer.from('7b226d657373616765223a2268656c6c6f227d0a', 'hex')],
   ['cjk', Buffer.from('e4b8ade69687', 'hex')],
@@ -75,6 +79,37 @@ function createJsonResponse(corpus, size) {
   ]);
 }
 
+function createStreamPayload(corpus, size) {
+  const pattern = jsonValuePatterns.get(corpus);
+  if (pattern === undefined) {
+    throw new TypeError(`Unsupported UTF-8 corpus: ${corpus}`);
+  }
+  const minimumSize =
+    streamPrefix.length + pattern.length + streamSuffix.length;
+  if (!Number.isSafeInteger(size) ||
+      size < minimumSize ||
+      size > MAX_PAYLOAD_SIZE) {
+    throw new RangeError(`Invalid UTF-8 stream payload size: ${size}`);
+  }
+
+  const payload = Buffer.allocUnsafe(size);
+  streamPrefix.copy(payload, 0);
+  const valueEnd = size - streamSuffix.length;
+  let offset = streamPrefix.length;
+  while (offset + pattern.length <= valueEnd) {
+    pattern.copy(payload, offset);
+    offset += pattern.length;
+  }
+  payload.fill(0x61, offset, valueEnd);
+  streamSuffix.copy(payload, valueEnd);
+  return payload;
+}
+
+function createStreamResponse(corpus, size) {
+  const request = createStreamPayload(corpus, size);
+  return request.subarray(streamPrefix.length, size - streamSuffix.length);
+}
+
 function sendError(res, statusCode, message) {
   const body = Buffer.from(message);
   res.writeHead(statusCode, {
@@ -106,6 +141,7 @@ function createServer(preload = []) {
          scenario !== 'h02-cached-string' &&
          scenario !== 'h04-buffer-echo' &&
          scenario !== 'h05-string-echo' &&
+         scenario !== 'h06-stream-transform' &&
          scenario !== 'h07-json-api') ||
         !patterns.has(corpus)) {
       sendError(res, 404, 'not found\n');
@@ -125,6 +161,7 @@ function createServer(preload = []) {
 
     if (scenario === 'h04-buffer-echo' ||
         scenario === 'h05-string-echo' ||
+        scenario === 'h06-stream-transform' ||
         scenario === 'h07-json-api') {
       if (req.method !== 'POST') {
         sendError(res, 405, 'method not allowed\n');
@@ -155,6 +192,36 @@ function createServer(preload = []) {
           'Content-Length': size,
         });
         res.end(body);
+      });
+      return;
+    }
+
+    if (scenario === 'h06-stream-transform') {
+      const decoder = new StringDecoder('utf8');
+      let bytesUntilBoundary = STREAM_DECODE_CHUNK_SIZE;
+      let body = '';
+      req.on('data', (chunk) => {
+        let offset = 0;
+        while (offset < chunk.length) {
+          const length = Math.min(bytesUntilBoundary, chunk.length - offset);
+          body += decoder.write(chunk.subarray(offset, offset + length));
+          offset += length;
+          bytesUntilBoundary -= length;
+          if (bytesUntilBoundary === 0) {
+            bytesUntilBoundary = STREAM_DECODE_CHUNK_SIZE;
+          }
+        }
+      });
+      req.on('end', () => {
+        body += decoder.end();
+        const start = body.indexOf('|');
+        const end = body.lastIndexOf('|');
+        const result = body.slice(start + 1, end);
+        res.writeHead(200, {
+          'Content-Type': 'application/octet-stream',
+          'Content-Length': Buffer.byteLength(result, 'utf8'),
+        });
+        res.end(result);
       });
       return;
     }
@@ -195,8 +262,11 @@ function createServer(preload = []) {
 module.exports = {
   CORPORA,
   MAX_PAYLOAD_SIZE,
+  STREAM_DECODE_CHUNK_SIZE,
   createJsonPayload,
   createJsonResponse,
   createPayload,
   createServer,
+  createStreamPayload,
+  createStreamResponse,
 };

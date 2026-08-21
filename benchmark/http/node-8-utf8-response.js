@@ -7,6 +7,7 @@ const {
   createJsonPayload,
   createPayload,
   createServer,
+  createStreamPayload,
 } = require('../fixtures/node-8-http-utf8.js');
 
 const bench = common.createBenchmark(main, {
@@ -15,6 +16,7 @@ const bench = common.createBenchmark(main, {
     'h02-cached-string',
     'h04-buffer-echo',
     'h05-string-echo',
+    'h06-stream-transform',
     'h07-json-api',
   ],
   corpus: CORPORA,
@@ -34,10 +36,16 @@ function main({ scenario, corpus, size, c, duration }) {
     };
     if (scenario === 'h04-buffer-echo' ||
         scenario === 'h05-string-echo' ||
+        scenario === 'h06-stream-transform' ||
         scenario === 'h07-json-api') {
       options.method = 'POST';
-      options.body = scenario === 'h07-json-api' ?
-        createJsonPayload(corpus, size) : createPayload(corpus, size);
+      if (scenario === 'h06-stream-transform') {
+        options.body = createStreamPayload(corpus, size);
+      } else if (scenario === 'h07-json-api') {
+        options.body = createJsonPayload(corpus, size);
+      } else {
+        options.body = createPayload(corpus, size);
+      }
       options.env = {
         NODE_HTTP_BENCHMARK_CONTENT_TYPE: scenario === 'h07-json-api' ?
           'application/json' : 'application/octet-stream',
