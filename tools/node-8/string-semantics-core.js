@@ -106,16 +106,21 @@ if (profile !== 'stock' && profile !== 'node-8') {
     assert.strictEqual(
       typeof operation, 'function', `unknown operation: ${testCase.operation}`);
 
-    const actual = operation();
+    let actual;
     try {
+      actual = operation();
       assert.deepStrictEqual(actual, testCase.expected[profile]);
       console.log(`PASS ${testCase.id}`);
-    } catch {
+    } catch (error) {
       failures++;
       console.error(`FAIL ${testCase.id}`);
       console.error(
         `  expected: ${JSON.stringify(testCase.expected[profile])}`);
-      console.error(`  actual:   ${JSON.stringify(actual)}`);
+      if (actual === undefined) {
+        console.error(`  threw:    ${error.name}: ${error.message}`);
+      } else {
+        console.error(`  actual:   ${JSON.stringify(actual)}`);
+      }
     }
   }
 

@@ -2736,8 +2736,9 @@ static void WriteFileUtf8(const FunctionCallbackInfo<Value>& args) {
 
   CHECK_EQ(args.Length(), 4);
 
-  BufferValue value(isolate, args[1]);
-  CHECK_NOT_NULL(*value);
+  CHECK(args[1]->IsString());
+  StringBytes::InlineDecoder value;
+  if (value.Decode(env, args[1].As<String>(), UTF8).IsNothing()) return;
 
   CHECK(args[2]->IsInt32());
   const int flags = args[2].As<Int32>()->Value();

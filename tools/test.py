@@ -829,8 +829,8 @@ def Execute(args, context, timeout=None, env=None, disable_core_files=False,
   )
   os.close(fd_out)
   os.close(fd_err)
-  output = open(outname, encoding='utf8').read()
-  errors = open(errname, encoding='utf8').read()
+  output = open(outname, encoding='utf8', errors='backslashreplace').read()
+  errors = open(errname, encoding='utf8', errors='backslashreplace').read()
   CheckedUnlink(outname)
   CheckedUnlink(errname)
 
