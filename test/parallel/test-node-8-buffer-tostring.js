@@ -62,3 +62,13 @@ for (const inputHex of [
 
 const sliced = Buffer.from('00e4b8adff', 'hex').toString('utf8', 1, 4);
 assert.strictEqual(Buffer.from(sliced, 'utf8').toString('hex'), 'e4b8ad');
+
+assert.deepStrictEqual(
+  observe(Buffer.from('3dd84ddc', 'hex').toString('utf16le')),
+  { length: 4, units: [0xf0, 0x9f, 0x91, 0x8d] });
+assert.deepStrictEqual(
+  observe(Buffer.from('00d8', 'hex').toString('utf16le')),
+  { length: 3, units: [0xed, 0xa0, 0x80] });
+assert.deepStrictEqual(
+  observe(Buffer.from('00dc', 'hex').toString('utf16le')),
+  { length: 3, units: [0xed, 0xb0, 0x80] });

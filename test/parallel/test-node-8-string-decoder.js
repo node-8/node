@@ -56,3 +56,16 @@ assert.deepStrictEqual(units(decodeHex(decoder, 'ff')), [0xff]);
 
 decoder = new StringDecoder('utf16le');
 assert.strictEqual(decodeHex(decoder, '3dd84ddc'), '\ud83d\udc4d');
+
+decoder = new StringDecoder('utf16le');
+assert.strictEqual(decodeHex(decoder, '3dd8'), '');
+assert.deepStrictEqual(units(decodeHex(decoder, '4ddc')),
+                       [0xf0, 0x9f, 0x91, 0x8d]);
+
+decoder = new StringDecoder('utf16le');
+assert.strictEqual(decodeHex(decoder, '00d8'), '');
+assert.deepStrictEqual(units(decoder.end()), [0xed, 0xa0, 0x80]);
+
+decoder = new StringDecoder('utf16le');
+assert.deepStrictEqual(units(decodeHex(decoder, '00dc')),
+                       [0xed, 0xb0, 0x80]);

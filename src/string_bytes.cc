@@ -59,6 +59,75 @@ bool UseNode8StringSemantics(Isolate* isolate) {
   return env != nullptr && env->experimental_node_8_string_semantics();
 }
 
+uint16_t ReadUtf16Le(const char* data, size_t index) {
+  const auto* bytes = reinterpret_cast<const uint8_t*>(data) + index * 2;
+  return static_cast<uint16_t>(bytes[0]) |
+         static_cast<uint16_t>(bytes[1]) << 8;
+}
+
+bool IsLeadSurrogate(uint16_t code_unit) {
+  return code_unit >= 0xD800 && code_unit <= 0xDBFF;
+}
+
+bool IsTrailSurrogate(uint16_t code_unit) {
+  return code_unit >= 0xDC00 && code_unit <= 0xDFFF;
+}
+
+template <typename Callback>
+void ForEachWtf8CodePoint(const char* data,
+                          size_t code_unit_length,
+                          Callback callback) {
+  for (size_t i = 0; i < code_unit_length; i++) {
+    const uint16_t first = ReadUtf16Le(data, i);
+    uint32_t code_point = first;
+    if (IsLeadSurrogate(first) && i + 1 < code_unit_length) {
+      const uint16_t second = ReadUtf16Le(data, i + 1);
+      if (IsTrailSurrogate(second)) {
+        code_point = 0x10000 +
+                     (static_cast<uint32_t>(first - 0xD800) << 10) +
+                     (second - 0xDC00);
+        i++;
+      }
+    }
+    callback(code_point);
+  }
+}
+
+size_t Wtf8LengthFromUtf16Le(const char* data, size_t code_unit_length) {
+  size_t length = 0;
+  ForEachWtf8CodePoint(data, code_unit_length, [&length](uint32_t code_point) {
+    length += code_point <= 0x7F   ? 1
+              : code_point <= 0x7FF ? 2
+              : code_point <= 0xFFFF ? 3
+                                      : 4;
+  });
+  return length;
+}
+
+void WriteWtf8FromUtf16Le(const char* data,
+                          size_t code_unit_length,
+                          char* output) {
+  ForEachWtf8CodePoint(data,
+                       code_unit_length,
+                       [&output](uint32_t code_point) {
+    if (code_point <= 0x7F) {
+      *output++ = static_cast<char>(code_point);
+    } else if (code_point <= 0x7FF) {
+      *output++ = static_cast<char>(0xC0 | (code_point >> 6));
+      *output++ = static_cast<char>(0x80 | (code_point & 0x3F));
+    } else if (code_point <= 0xFFFF) {
+      *output++ = static_cast<char>(0xE0 | (code_point >> 12));
+      *output++ = static_cast<char>(0x80 | ((code_point >> 6) & 0x3F));
+      *output++ = static_cast<char>(0x80 | (code_point & 0x3F));
+    } else {
+      *output++ = static_cast<char>(0xF0 | (code_point >> 18));
+      *output++ = static_cast<char>(0x80 | ((code_point >> 12) & 0x3F));
+      *output++ = static_cast<char>(0x80 | ((code_point >> 6) & 0x3F));
+      *output++ = static_cast<char>(0x80 | (code_point & 0x3F));
+    }
+  });
+}
+
 template <typename ResourceType, typename TypeName>
 class ExternString: public ResourceType {
  public:
@@ -729,6 +798,17 @@ MaybeLocal<Value> StringBytes::Encode(Isolate* isolate,
     case UCS2: {
       buflen = keep_buflen_in_range(buflen);
       size_t str_len = buflen / 2;
+      if (UseNode8StringSemantics(isolate)) {
+        const size_t wtf8_length = Wtf8LengthFromUtf16Le(buf, str_len);
+        if (wtf8_length > static_cast<size_t>(String::kMaxLength)) {
+          isolate->ThrowException(node::ERR_STRING_TOO_LONG(isolate));
+          return MaybeLocal<Value>();
+        }
+        return EncodeOneByteString(
+            isolate, wtf8_length, [buf, str_len](char* output) {
+              WriteWtf8FromUtf16Le(buf, str_len, output);
+            });
+      }
       if constexpr (IsBigEndian()) {
         return EncodeTwoByteString(
             isolate, str_len, [buf, str_len](uint16_t* dst) {
