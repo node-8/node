@@ -660,6 +660,9 @@ EnvironmentOptionsParser::EnvironmentOptionsParser() {
             "use byte-preserving node-8 String semantics",
             &EnvironmentOptions::experimental_node_8_string_semantics,
             kDisallowedInEnvvar);
+  AddOption("--utf8-string-semantics", "", V8Option{});
+  Implies("--experimental-node-8-string-semantics",
+          "--utf8-string-semantics");
   AddOption("--permission",
             "enable the permission system",
             &EnvironmentOptions::permission,
