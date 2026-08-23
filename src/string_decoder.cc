@@ -29,6 +29,13 @@ bool UseNode8StringSemantics(Isolate* isolate) {
   return env != nullptr && env->experimental_node_8_string_semantics();
 }
 
+bool IsUtf16LeLeadSurrogate(const char* data) {
+  const uint16_t code_unit =
+      static_cast<uint8_t>(data[0]) |
+      static_cast<uint16_t>(static_cast<uint8_t>(data[1])) << 8;
+  return code_unit >= 0xD800 && code_unit <= 0xDBFF;
+}
+
 MaybeLocal<String> MakeString(Isolate* isolate,
                               const char* data,
                               size_t length,
@@ -128,18 +135,33 @@ MaybeLocal<String> StringDecoder::DecodeData(Isolate* isolate,
       state_[kBufferedBytes] += found_bytes;
 
       if (MissingBytes() == 0) [[likely]] {
-        // If no more bytes are missing, create a small string that we
-        // will later prepend.
-        if (!MakeString(isolate,
-                        IncompleteCharacterBuffer(),
-                        BufferedBytes(),
-                        Encoding()).ToLocal(&prepend)) {
-          return MaybeLocal<String>();
+        if (Encoding() == UCS2 && UseNode8StringSemantics(isolate) &&
+            BufferedBytes() == 2 &&
+            IsUtf16LeLeadSurrogate(IncompleteCharacterBuffer())) {
+          found_bytes = std::min(nread, static_cast<size_t>(2));
+          memcpy(
+              IncompleteCharacterBuffer() + BufferedBytes(), data, found_bytes);
+          data += found_bytes;
+          nread -= found_bytes;
+          state_[kMissingBytes] = 2 - found_bytes;
+          state_[kBufferedBytes] += found_bytes;
         }
 
-        *nread_ptr += BufferedBytes();
-        // No more buffered bytes.
-        state_[kBufferedBytes] = 0;
+        // If no more bytes are missing, create a small string that we
+        // will later prepend.
+        if (MissingBytes() == 0) {
+          if (!MakeString(isolate,
+                          IncompleteCharacterBuffer(),
+                          BufferedBytes(),
+                          Encoding())
+                   .ToLocal(&prepend)) {
+            return MaybeLocal<String>();
+          }
+
+          *nread_ptr += BufferedBytes();
+          // No more buffered bytes.
+          state_[kBufferedBytes] = 0;
+        }
       }
     }
 
@@ -209,6 +231,10 @@ MaybeLocal<String> StringDecoder::DecodeData(Isolate* isolate,
           // We got half a codepoint, and need the second byte of it.
           state_[kBufferedBytes] = 1;
           state_[kMissingBytes] = 1;
+          if (UseNode8StringSemantics(isolate) && nread >= 3 &&
+              IsUtf16LeLeadSurrogate(data + nread - 3)) {
+            state_[kBufferedBytes] = 3;
+          }
         } else if ((data[nread - 1] & 0xFC) == 0xD8) {
           // Half a split UTF-16 character.
           state_[kBufferedBytes] = 2;
