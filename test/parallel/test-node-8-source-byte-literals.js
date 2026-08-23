@@ -21,6 +21,22 @@ assert.strictEqual(Buffer.from(literal, 'utf8').toString('hex'), literalHex);
 assert.strictEqual(
   Buffer.from(literalHex, 'hex').toString('utf8'), literal);
 
+const 变量 = 40;
+assert.strictEqual(变量 + 2, 42);
+class 私有字段测试 {
+  #值 = 40;
+  读取() { return this.#值 + 2; }
+}
+assert.strictEqual(new 私有字段测试().读取(), 42);
+
+const embeddedSource = process.binding('natives')['internal/cli_table'];
+assert.strictEqual(
+  embeddedSource.length, Buffer.byteLength(embeddedSource, 'utf8'));
+assert.strictEqual(embeddedSource.includes("middleMiddle: '─'"), true);
+assert.strictEqual(
+  Buffer.from(embeddedSource, 'utf8').includes(Buffer.from([0xe2, 0x94, 0x80])),
+  true);
+
 assert.deepStrictEqual(byteValues('\xE9'), [0xe9]);
 assert.deepStrictEqual(byteValues('\u00E9'), [0xc3, 0xa9]);
 assert.strictEqual(Buffer.from('\xE9', 'utf8').toString('hex'), 'e9');

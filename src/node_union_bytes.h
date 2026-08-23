@@ -45,10 +45,11 @@ using StaticExternalOneByteResource =
     StaticExternalByteResource<uint8_t,
                                char,
                                v8::String::ExternalOneByteStringResource>;
-using StaticExternalTwoByteResource =
-    StaticExternalByteResource<uint16_t,
-                               uint16_t,
-                               v8::String::ExternalStringResource>;
+// Preserves UTF-8 source bytes in node8 mode and decodes them in stock mode.
+class StaticExternalUtf8Resource final : public StaticExternalOneByteResource {
+ public:
+  using StaticExternalOneByteResource::StaticExternalOneByteResource;
+};
 
 // Similar to a v8::String, but it's independent from Isolates
 // and can be materialized in Isolates as external Strings
@@ -56,22 +57,22 @@ using StaticExternalTwoByteResource =
 class UnionBytes {
  public:
   explicit UnionBytes(StaticExternalOneByteResource* one_byte_resource)
-      : one_byte_resource_(one_byte_resource), two_byte_resource_(nullptr) {}
-  explicit UnionBytes(StaticExternalTwoByteResource* two_byte_resource)
-      : one_byte_resource_(nullptr), two_byte_resource_(two_byte_resource) {}
+      : resource_(one_byte_resource), is_utf8_(false) {}
+  explicit UnionBytes(StaticExternalUtf8Resource* utf8_resource)
+      : resource_(utf8_resource), is_utf8_(true) {}
 
   UnionBytes(const UnionBytes&) = default;
   UnionBytes& operator=(const UnionBytes&) = default;
   UnionBytes(UnionBytes&&) = default;
   UnionBytes& operator=(UnionBytes&&) = default;
 
-  bool is_one_byte() const { return one_byte_resource_ != nullptr; }
+  bool is_utf8() const { return is_utf8_; }
 
   v8::Local<v8::String> ToStringChecked(v8::Isolate* isolate) const;
 
  private:
-  StaticExternalOneByteResource* one_byte_resource_;
-  StaticExternalTwoByteResource* two_byte_resource_;
+  StaticExternalOneByteResource* resource_;
+  bool is_utf8_;
 };
 
 }  // namespace node

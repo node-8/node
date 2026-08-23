@@ -411,13 +411,8 @@ const std::string_view GetCode(uint16_t index) {
 
 #ifdef NODE_JS2C_USE_STRING_LITERALS
 const char* string_literal_def_template = "static const %s *%s_raw = ";
-constexpr std::string_view latin1_string_literal_start =
-    "reinterpret_cast<const uint8_t*>(\"";
 constexpr std::string_view ascii_string_literal_start =
     "reinterpret_cast<const uint8_t*>(R\"JS2C1b732aee(";
-constexpr std::string_view utf16_string_literal_start =
-    "reinterpret_cast<const uint16_t*>(uR\"JS2C1b732aee(";
-constexpr std::string_view latin1_string_literal_end = "\");";
 constexpr std::string_view utf_string_literal_end = ")JS2C1b732aee\");";
 #else
 const char* array_literal_def_template = "static const %s %s_raw[] = ";
@@ -432,111 +427,48 @@ constexpr std::string_view array_literal_end = "\n};\n\n";
 //
 // static StaticExternalOneByteResource fs_resource(fs_raw, 1234, nullptr);
 //
-// static const uint16_t internal_cli_table_raw[] = {
-//  ....
-// };
-//
-// static StaticExternalTwoByteResource
-// internal_cli_table_resource(internal_cli_table_raw, 1234, nullptr);
-//
 // If NODE_JS2C_USE_STRING_LITERALS is defined, the data is output as C++
 // raw strings (i.e. R"JS2C1b732aee(...)JS2C1b732aee") rather than as an
 // array. This speeds up compilation for gcc/clang.
 enum class CodeType {
-  kAscii,   // Code points are all within 0-127
-  kLatin1,  // Code points are all within 0-255
-  kTwoByte,
+  kAscii,
+  kUtf8,
 };
-template <typename T>
 Fragment GetDefinitionImpl(const std::vector<char>& code,
                            const std::string& var,
                            CodeType type) {
-  constexpr bool is_two_byte = std::is_same_v<T, uint16_t>;
-  static_assert(is_two_byte || std::is_same_v<T, char>);
-
-  size_t count = is_two_byte
-                     ? simdutf::utf16_length_from_utf8(code.data(), code.size())
-                     : code.size();
-  constexpr const char* arr_type = is_two_byte ? "uint16_t" : "uint8_t";
-  constexpr const char* resource_type = is_two_byte
-                                            ? "StaticExternalTwoByteResource"
-                                            : "StaticExternalOneByteResource";
+  size_t count = code.size();
+  const char* resource_type = type == CodeType::kUtf8
+                                  ? "StaticExternalUtf8Resource"
+                                  : "StaticExternalOneByteResource";
 
 #ifdef NODE_JS2C_USE_STRING_LITERALS
   const char* literal_def_template = string_literal_def_template;
-  // For code that contains Latin-1 characters, be conservative and assume
-  // they all need escaping: one "\" and three digits.
-  size_t unit = type == CodeType::kLatin1 ? 4 : 1;
-  size_t def_size = 512 + code.size() * unit;
+  size_t def_size = 512 + code.size();
 #else
   const char* literal_def_template = array_literal_def_template;
-  constexpr size_t unit =
-      (is_two_byte ? 5 : 3) + 1;  // 0-65536 or 0-255 and a ","
+  constexpr size_t unit = 4;  // 0-255 and a ","
   size_t def_size = 512 + count * unit;
 #endif
 
   Fragment result(def_size, 0);
 
   int cur = snprintf(
-      result.data(), def_size, literal_def_template, arr_type, var.c_str());
+      result.data(), def_size, literal_def_template, "uint8_t", var.c_str());
 
   assert(cur != 0);
 
 #ifdef NODE_JS2C_USE_STRING_LITERALS
-  std::string_view start_string_view;
-  switch (type) {
-    case CodeType::kAscii:
-      start_string_view = ascii_string_literal_start;
-      break;
-    case CodeType::kLatin1:
-      start_string_view = latin1_string_literal_start;
-      break;
-    case CodeType::kTwoByte:
-      start_string_view = utf16_string_literal_start;
-      break;
-  }
-
-  memcpy(
-      result.data() + cur, start_string_view.data(), start_string_view.size());
-  cur += start_string_view.size();
-
-  if (type != CodeType::kLatin1) {
-    memcpy(result.data() + cur, code.data(), code.size());
-    cur += code.size();
-  } else {
-    const uint8_t* ptr = reinterpret_cast<const uint8_t*>(code.data());
-    for (size_t i = 0; i < count; ++i) {
-      // Avoid using snprintf on large chunks of data because it's much slower.
-      // It's fine to use it on small amount of data though.
-      uint8_t ch = ptr[i];
-      if (ch > 127) {
-        Debug("In %s, found non-ASCII Latin-1 character at %zu: %d\n",
-              var.c_str(),
-              i,
-              ch);
-      }
-      const std::string& str = GetOctalCode(ch);
-      memcpy(result.data() + cur, str.c_str(), str.size());
-      cur += str.size();
-    }
-  }
-
-  std::string_view string_literal_end;
-  switch (type) {
-    case CodeType::kAscii:
-      string_literal_end = utf_string_literal_end;
-      break;
-    case CodeType::kLatin1:
-      string_literal_end = latin1_string_literal_end;
-      break;
-    case CodeType::kTwoByte:
-      string_literal_end = utf_string_literal_end;
-      break;
-  }
   memcpy(result.data() + cur,
-         string_literal_end.data(),
-         string_literal_end.size());
-  cur += string_literal_end.size();
+         ascii_string_literal_start.data(),
+         ascii_string_literal_start.size());
+  cur += ascii_string_literal_start.size();
+  memcpy(result.data() + cur, code.data(), code.size());
+  cur += code.size();
+  memcpy(result.data() + cur,
+         utf_string_literal_end.data(),
+         utf_string_literal_end.size());
+  cur += utf_string_literal_end.size();
 #else
   memcpy(result.data() + cur,
          array_literal_start.data(),
@@ -545,34 +477,11 @@ Fragment GetDefinitionImpl(const std::vector<char>& code,
 
   // Avoid using snprintf on large chunks of data because it's much slower.
   // It's fine to use it on small amount of data though.
-  if constexpr (is_two_byte) {
-    std::vector<uint16_t> utf16_codepoints(count);
-    size_t utf16_count = simdutf::convert_utf8_to_utf16(
-        code.data(),
-        code.size(),
-        reinterpret_cast<char16_t*>(utf16_codepoints.data()));
-    assert(utf16_count != 0);
-    utf16_codepoints.resize(utf16_count);
-    Debug("static size %zu\n", utf16_count);
-    for (size_t i = 0; i < utf16_count; ++i) {
-      std::string_view str = GetCode(utf16_codepoints[i]);
-      memcpy(result.data() + cur, str.data(), str.size());
-      cur += str.size();
-    }
-  } else {
-    const uint8_t* ptr = reinterpret_cast<const uint8_t*>(code.data());
-    for (size_t i = 0; i < count; ++i) {
-      uint16_t ch = static_cast<uint16_t>(ptr[i]);
-      if (ch > 127) {
-        Debug("In %s, found non-ASCII Latin-1 character at %zu: %d\n",
-              var.c_str(),
-              i,
-              ch);
-      }
-      std::string_view str = GetCode(ch);
-      memcpy(result.data() + cur, str.data(), str.size());
-      cur += str.size();
-    }
+  const uint8_t* ptr = reinterpret_cast<const uint8_t*>(code.data());
+  for (size_t i = 0; i < count; ++i) {
+    std::string_view str = GetCode(ptr[i]);
+    memcpy(result.data() + cur, str.data(), str.size());
+    cur += str.size();
   }
 
   memcpy(
@@ -592,81 +501,16 @@ Fragment GetDefinitionImpl(const std::vector<char>& code,
   return result;
 }
 
-bool Simplify(const std::vector<char>& code,
-              const std::string& var,
-              std::vector<char>* simplified) {
-  // Allowlist files to avoid false positives.
-  // TODO(joyeecheung): this could be removed if undici updates itself
-  // to replace "’" with "'" though we could still keep this skeleton in
-  // place for future hot fixes that are verified by humans.
-  if (var != "internal_deps_undici_undici") {
-    return false;
-  }
-
-  size_t code_size = code.size();
-  simplified->reserve(code_size);
-  const uint8_t* ptr = reinterpret_cast<const uint8_t*>(code.data());
-  size_t simplified_count = 0;
-  for (size_t i = 0; i < code_size; ++i) {
-    switch (ptr[i]) {
-      case 226: {  // ’ [ 226, 128, 153 ] -> '
-        if (i + 2 < code_size && ptr[i + 1] == 128 && ptr[i + 2] == 153) {
-          simplified->push_back('\'');
-          i += 2;
-          simplified_count++;
-          break;
-        }
-        [[fallthrough]];
-      }
-      default: {
-        simplified->push_back(code[i]);
-        break;
-      }
-    }
-  }
-
-  if (simplified_count > 0) {
-    Debug("Simplified %lu characters, ", simplified_count);
-    Debug("old size %lu, new size %lu\n", code_size, simplified->size());
-    return true;
-  }
-  return false;
-}
-
 Fragment GetDefinition(const std::string& var, const std::vector<char>& code) {
   Debug("GetDefinition %s, code size %zu\n", var.c_str(), code.size());
   bool is_ascii = simdutf::validate_ascii(code.data(), code.size());
 
   if (is_ascii) {
     Debug("ASCII-only, static size %zu\n", code.size());
-    return GetDefinitionImpl<char>(code, var, CodeType::kAscii);
+    return GetDefinitionImpl(code, var, CodeType::kAscii);
   }
-
-  std::vector<char> latin1(code.size());
-  auto result = simdutf::convert_utf8_to_latin1_with_errors(
-      code.data(), code.size(), latin1.data());
-  if (!result.error) {
-    latin1.resize(result.count);
-    Debug("Latin-1-only, old size %zu, new size %zu\n",
-          code.size(),
-          latin1.size());
-    return GetDefinitionImpl<char>(latin1, var, CodeType::kLatin1);
-  }
-
-  // Since V8 only supports Latin-1 and UTF16 as underlying representation
-  // we have to encode all files containing two-byte characters as UTF16.
-  // While some files do need two-byte characters, some just
-  // unintentionally have them. Replace certain characters that are known
-  // to have sane one-byte equivalent to save space.
-  std::vector<char> simplified;
-  if (Simplify(code, var, &simplified)) {  // Changed.
-    Debug("%s is simplified, re-generate definition\n", var.c_str());
-    return GetDefinition(var, simplified);
-  }
-
-  // Simplification did not turn the code into 1-byte string. Just
-  // use the original.
-  return GetDefinitionImpl<uint16_t>(code, var, CodeType::kTwoByte);
+  Debug("UTF-8, static size %zu\n", code.size());
+  return GetDefinitionImpl(code, var, CodeType::kUtf8);
 }
 
 int AddModule(const std::string& filename,

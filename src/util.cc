@@ -636,13 +636,18 @@ void SetConstructorFunction(Isolate* isolate,
 }
 
 Local<String> UnionBytes::ToStringChecked(Isolate* isolate) const {
-  if (is_one_byte()) {
-    return String::NewExternalOneByte(isolate, one_byte_resource_)
-        .ToLocalChecked();
-  } else {
-    return String::NewExternalTwoByte(isolate, two_byte_resource_)
+  if (is_utf8()) {
+    Environment* env = Environment::GetCurrent(isolate);
+    if (env != nullptr && env->experimental_node_8_string_semantics()) {
+      return String::NewExternalOneByte(isolate, resource_).ToLocalChecked();
+    }
+    return String::NewFromUtf8(isolate,
+                               resource_->data(),
+                               v8::NewStringType::kNormal,
+                               resource_->length())
         .ToLocalChecked();
   }
+  return String::NewExternalOneByte(isolate, resource_).ToLocalChecked();
 }
 
 RAIIIsolateWithoutEntering::RAIIIsolateWithoutEntering(const SnapshotData* data)

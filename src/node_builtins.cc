@@ -7,7 +7,6 @@
 #include "node_internals.h"
 #include "node_threadsafe_cow-inl.h"
 #include "quic/guard.h"
-#include "simdutf.h"
 #include "util-inl.h"
 #include "v8-value.h"
 
@@ -222,13 +221,13 @@ const BuiltinSource* BuiltinLoader::LoadBuiltinSource(Isolate* isolate,
 
 namespace {
 static Mutex externalized_builtins_mutex;
-std::unordered_map<std::string, std::unique_ptr<StaticExternalTwoByteResource>>
+std::unordered_map<std::string, std::unique_ptr<StaticExternalUtf8Resource>>
     externalized_builtin_sources;
 }  // namespace
 
 const BuiltinSource* BuiltinLoader::AddExternalizedBuiltin(
     const char* id, const char* filename) {
-  StaticExternalTwoByteResource* resource;
+  StaticExternalUtf8Resource* resource;
   {
     Mutex::ScopedLock lock(externalized_builtins_mutex);
     auto it = externalized_builtin_sources.find(id);
@@ -242,19 +241,12 @@ const BuiltinSource* BuiltinLoader::AddExternalizedBuiltin(
                 filename);
         ABORT();
       }
-      size_t expected_u16_length =
-          simdutf::utf16_length_from_utf8(source.data(), source.length());
-      auto out = std::make_shared<std::vector<uint16_t>>(expected_u16_length);
-      size_t u16_length = simdutf::convert_utf8_to_utf16(
-          source.data(),
-          source.length(),
-          reinterpret_cast<char16_t*>(out->data()));
-      out->resize(u16_length);
+      auto out = std::make_shared<std::string>(std::move(source));
 
       auto result = externalized_builtin_sources.emplace(
           id,
-          std::make_unique<StaticExternalTwoByteResource>(
-              out->data(), out->size(), out));
+          std::make_unique<StaticExternalUtf8Resource>(
+              reinterpret_cast<const uint8_t*>(out->data()), out->size(), out));
       CHECK(result.second);
       it = result.first;
     }

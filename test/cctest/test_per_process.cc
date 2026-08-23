@@ -21,12 +21,12 @@ namespace {
 TEST_F(PerProcessTest, EmbeddedSources) {
   const auto& sources = PerProcessTest::get_sources_for_test();
   ASSERT_TRUE(std::any_of(sources.cbegin(), sources.cend(), [](auto p) {
-    return p.second.source.is_one_byte();
-  })) << "BuiltinLoader::source_ should have some 8bit items";
+    return p.second.source.is_utf8();
+  })) << "BuiltinLoader::source_ should have some UTF-8 items";
 
   ASSERT_TRUE(std::any_of(sources.cbegin(), sources.cend(), [](auto p) {
-    return !p.second.source.is_one_byte();
-  })) << "BuiltinLoader::source_ should have some 16bit items";
+    return !p.second.source.is_utf8();
+  })) << "BuiltinLoader::source_ should have some ASCII items";
 }
 
 }  // end namespace
