@@ -7,6 +7,7 @@
 #include "env-inl.h"
 #include "js_native_api.h"
 #include "js_native_api_v8.h"
+#include "string_bytes.h"
 #include "util-inl.h"
 
 #define CHECK_MAYBE_NOTHING(env, maybe, status)                                \
@@ -2592,6 +2593,31 @@ napi_status NAPI_CDECL napi_get_value_string_utf16(napi_env env,
   v8::Local<v8::Value> val = v8impl::V8LocalValueFromJsValue(value);
   RETURN_STATUS_IF_FALSE(env, val->IsString(), napi_string_expected);
   v8::Local<v8::String> str = val.As<v8::String>();
+
+  node::Environment* node_env = node::Environment::GetCurrent(env->isolate);
+  // Node-8 stores WTF-8 bytes, but this API boundary remains UTF-16.
+  if (node_env != nullptr && node_env->experimental_node_8_string_semantics() &&
+      str->IsOneByte()) {
+    if (!buf) {
+      CHECK_ARG(env, result);
+      *result = node::StringBytes::UCS2Length(env->isolate, str);
+    } else if (bufsize != 0) {
+      const size_t capacity =
+          std::min(bufsize - 1, static_cast<size_t>(str->Length()));
+      const size_t length =
+          node::StringBytes::Write(env->isolate,
+                                   reinterpret_cast<char*>(buf),
+                                   capacity * sizeof(*buf),
+                                   str,
+                                   node::UCS2) /
+          sizeof(*buf);
+      buf[length] = 0;
+      if (result != nullptr) *result = length;
+    } else if (result != nullptr) {
+      *result = 0;
+    }
+    return napi_clear_last_error(env);
+  }
 
   if (!buf) {
     CHECK_ARG(env, result);

@@ -8,6 +8,8 @@
 
 enum length_type { actual_length, auto_length };
 
+static size_t external_utf16_finalize_count;
+
 static napi_status validate_and_retrieve_single_string_arg(
     napi_env env, napi_callback_info info, napi_value* arg) {
   size_t argc = 1;
@@ -91,6 +93,13 @@ static void free_string(node_api_basic_env env, void* data, void* hint) {
   free(data);
 }
 
+static void free_external_utf16(node_api_basic_env env,
+                                void* data,
+                                void* hint) {
+  external_utf16_finalize_count++;
+  free(data);
+}
+
 static napi_status create_external_latin1(napi_env env,
                                           const char* string,
                                           size_t length,
@@ -147,13 +156,21 @@ static napi_status create_external_utf16(napi_env env,
   string_copy[actual_length] = 0;
 
   status = node_api_create_external_string_utf16(
-      env, string_copy, length, free_string, NULL, result, &copied);
+      env, string_copy, length, free_external_utf16, NULL, result, &copied);
   if (status != napi_ok) {
     free(string_copy);
     return status;
   }
 
   return napi_ok;
+}
+
+static napi_value GetExternalUtf16FinalizeCount(napi_env env,
+                                                napi_callback_info info) {
+  napi_value result;
+  NODE_API_CALL(
+      env, napi_create_double(env, external_utf16_finalize_count, &result));
+  return result;
 }
 
 static napi_value TestLatin1(napi_env env, napi_callback_info info) {
@@ -467,6 +484,8 @@ napi_value Init(napi_env env, napi_value exports) {
       DECLARE_NODE_API_PROPERTY("TestUtf16External", TestUtf16External),
       DECLARE_NODE_API_PROPERTY("TestUtf16ExternalAutoLength",
                                 TestUtf16ExternalAutoLength),
+      DECLARE_NODE_API_PROPERTY("GetExternalUtf16FinalizeCount",
+                                GetExternalUtf16FinalizeCount),
       DECLARE_NODE_API_PROPERTY("TestUtf16Insufficient", TestUtf16Insufficient),
       DECLARE_NODE_API_PROPERTY("Latin1Length", Latin1Length),
       DECLARE_NODE_API_PROPERTY("Utf16Length", Utf16Length),

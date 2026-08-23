@@ -77,6 +77,9 @@ class StringBytes {
                       v8::Local<v8::Value> val,
                       enum encoding enc);
 
+  // Returns the UTF-16 code-unit length required by UCS2 output.
+  static size_t UCS2Length(v8::Isolate* isolate, v8::Local<v8::String> str);
+
   // Take the bytes in the src, and turn it into a Buffer or String.
   static v8::MaybeLocal<v8::Value> Encode(v8::Isolate* isolate,
                                           const char* buf,

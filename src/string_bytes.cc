@@ -128,6 +128,92 @@ void WriteWtf8FromUtf16Le(const char* data,
   });
 }
 
+struct DecodedWtf8CodePoint {
+  uint32_t value;
+  size_t byte_length;
+};
+
+DecodedWtf8CodePoint DecodeWtf8CodePoint(const uint8_t* data, size_t length) {
+  const uint8_t first = data[0];
+  if (first <= 0x7F) return {first, 1};
+
+  size_t expected_length;
+  uint8_t second_min = 0x80;
+  uint8_t second_max = 0xBF;
+  uint32_t value;
+  if (first >= 0xC2 && first <= 0xDF) {
+    expected_length = 2;
+    value = first & 0x1F;
+  } else if (first >= 0xE0 && first <= 0xEF) {
+    expected_length = 3;
+    value = first & 0x0F;
+    if (first == 0xE0) second_min = 0xA0;
+    // WTF-8 intentionally permits surrogate code points after 0xED.
+  } else if (first >= 0xF0 && first <= 0xF4) {
+    expected_length = 4;
+    value = first & 0x07;
+    if (first == 0xF0) second_min = 0x90;
+    if (first == 0xF4) second_max = 0x8F;
+  } else {
+    return {0xFFFD, 1};
+  }
+
+  if (length == 1) return {0xFFFD, 1};
+  const uint8_t second = data[1];
+  if (second < second_min || second > second_max) return {0xFFFD, 1};
+  value = (value << 6) | (second & 0x3F);
+
+  for (size_t i = 2; i < expected_length; i++) {
+    if (i == length) return {0xFFFD, i};
+    const uint8_t next = data[i];
+    if (next < 0x80 || next > 0xBF) return {0xFFFD, i};
+    value = (value << 6) | (next & 0x3F);
+  }
+  return {value, expected_length};
+}
+
+size_t Wtf8Utf16Length(const uint8_t* data, size_t length) {
+  size_t utf16_length = 0;
+  for (size_t offset = 0; offset < length;) {
+    const DecodedWtf8CodePoint decoded =
+        DecodeWtf8CodePoint(data + offset, length - offset);
+    utf16_length += decoded.value > 0xFFFF ? 2 : 1;
+    offset += decoded.byte_length;
+  }
+  return utf16_length;
+}
+
+size_t WriteWtf8AsUtf16(const uint8_t* data,
+                        size_t length,
+                        char* output,
+                        size_t capacity) {
+  size_t written = 0;
+  for (size_t offset = 0; offset < length && written < capacity;) {
+    const DecodedWtf8CodePoint decoded =
+        DecodeWtf8CodePoint(data + offset, length - offset);
+    offset += decoded.byte_length;
+
+    uint16_t code_unit;
+    if (decoded.value <= 0xFFFF) {
+      code_unit = static_cast<uint16_t>(decoded.value);
+      memcpy(
+          output + written * sizeof(code_unit), &code_unit, sizeof(code_unit));
+      written++;
+      continue;
+    }
+
+    const uint32_t supplementary = decoded.value - 0x10000;
+    code_unit = static_cast<uint16_t>(0xD800 + (supplementary >> 10));
+    memcpy(output + written * sizeof(code_unit), &code_unit, sizeof(code_unit));
+    written++;
+    if (written == capacity) break;
+    code_unit = static_cast<uint16_t>(0xDC00 + (supplementary & 0x3FF));
+    memcpy(output + written * sizeof(code_unit), &code_unit, sizeof(code_unit));
+    written++;
+  }
+  return written;
+}
+
 template <typename ResourceType, typename TypeName>
 class ExternString: public ResourceType {
  public:
@@ -318,6 +404,17 @@ size_t StringBytes::WriteUCS2(Isolate* isolate,
                               char* buf,
                               size_t buflen,
                               Local<String> str) {
+  String::ValueView view(isolate, str);
+  if (UseNode8StringSemantics(isolate) && view.is_one_byte()) {
+    const size_t capacity = buflen / sizeof(uint16_t);
+    const size_t written =
+        WriteWtf8AsUtf16(reinterpret_cast<const uint8_t*>(view.data8()),
+                         view.length(),
+                         buf,
+                         capacity);
+    return written * sizeof(uint16_t);
+  }
+
   uint16_t* const dst = reinterpret_cast<uint16_t*>(buf);
 
   const size_t max_chars = buflen / sizeof(*dst);
@@ -344,6 +441,15 @@ size_t StringBytes::WriteUCS2(Isolate* isolate,
   }
 
   return nchars * sizeof(*dst);
+}
+
+size_t StringBytes::UCS2Length(Isolate* isolate, Local<String> str) {
+  String::ValueView view(isolate, str);
+  if (UseNode8StringSemantics(isolate) && view.is_one_byte()) {
+    return Wtf8Utf16Length(reinterpret_cast<const uint8_t*>(view.data8()),
+                           view.length());
+  }
+  return str->Length();
 }
 
 size_t StringBytes::Write(Isolate* isolate,
@@ -600,7 +706,7 @@ Maybe<size_t> StringBytes::Size(Isolate* isolate,
           reinterpret_cast<const char16_t*>(view.data16()), view.length()));
 
     case UCS2:
-      return Just(view.length() * sizeof(uint16_t));
+      return Just(UCS2Length(isolate, str) * sizeof(uint16_t));
 
     case BASE64URL: {
       return Just(simdutf::base64_length_from_binary(view.length(),
