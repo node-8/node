@@ -639,7 +639,7 @@ Local<String> UnionBytes::ToStringChecked(Isolate* isolate) const {
   if (is_utf8()) {
     Environment* env = Environment::GetCurrent(isolate);
     if (env != nullptr && env->experimental_node_8_string_semantics()) {
-      return String::NewExternalOneByte(isolate, resource_).ToLocalChecked();
+      return String::NewExternalBytes(isolate, resource_).ToLocalChecked();
     }
     return String::NewFromUtf8(isolate,
                                resource_->data(),

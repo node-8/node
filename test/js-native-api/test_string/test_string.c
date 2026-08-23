@@ -8,6 +8,7 @@
 
 enum length_type { actual_length, auto_length };
 
+static size_t external_latin1_finalize_count;
 static size_t external_utf16_finalize_count;
 
 static napi_status validate_and_retrieve_single_string_arg(
@@ -89,7 +90,10 @@ static napi_value TestTwoByteImpl(napi_env env,
   return output;
 }
 
-static void free_string(node_api_basic_env env, void* data, void* hint) {
+static void free_external_latin1(node_api_basic_env env,
+                                 void* data,
+                                 void* hint) {
+  external_latin1_finalize_count++;
   free(data);
 }
 
@@ -116,7 +120,7 @@ static napi_status create_external_latin1(napi_env env,
   string_copy[actual_length] = 0;
 
   status = node_api_create_external_string_latin1(
-      env, string_copy, length, free_string, NULL, result, &copied);
+      env, string_copy, length, free_external_latin1, NULL, result, &copied);
   // We do not want the string to be copied.
   if (copied) {
     return napi_generic_failure;
@@ -170,6 +174,14 @@ static napi_value GetExternalUtf16FinalizeCount(napi_env env,
   napi_value result;
   NODE_API_CALL(
       env, napi_create_double(env, external_utf16_finalize_count, &result));
+  return result;
+}
+
+static napi_value GetExternalLatin1FinalizeCount(napi_env env,
+                                                 napi_callback_info info) {
+  napi_value result;
+  NODE_API_CALL(
+      env, napi_create_double(env, external_latin1_finalize_count, &result));
   return result;
 }
 
@@ -474,6 +486,8 @@ napi_value Init(napi_env env, napi_value exports) {
       DECLARE_NODE_API_PROPERTY("TestLatin1External", TestLatin1External),
       DECLARE_NODE_API_PROPERTY("TestLatin1ExternalAutoLength",
                                 TestLatin1ExternalAutoLength),
+      DECLARE_NODE_API_PROPERTY("GetExternalLatin1FinalizeCount",
+                                GetExternalLatin1FinalizeCount),
       DECLARE_NODE_API_PROPERTY("TestLatin1Insufficient",
                                 TestLatin1Insufficient),
       DECLARE_NODE_API_PROPERTY("TestUtf8", TestUtf8),

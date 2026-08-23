@@ -2,8 +2,11 @@
 'use strict';
 
 const common = require('../common');
+if (!common.hasCrypto) common.skip('missing crypto');
+
 const tmpdir = require('../common/tmpdir');
 const assert = require('assert');
+const crypto = require('crypto');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
@@ -16,6 +19,11 @@ const file = path.join(tmpdir.path, 'source-byte-io.txt');
 fs.writeFileSync(file, literal, 'utf8');
 assert.strictEqual(fs.readFileSync(file).toString('hex'), literalHex);
 assert.strictEqual(fs.readFileSync(file).toString('utf8'), literal);
+
+const stringDigest = crypto.createHash('sha256').update(literal).digest('hex');
+const bufferDigest = crypto.createHash('sha256')
+  .update(Buffer.from(literal, 'utf8')).digest('hex');
+assert.strictEqual(stringDigest, bufferDigest);
 
 const server = http.createServer(common.mustCall((request, response) => {
   const chunks = [];

@@ -1,6 +1,7 @@
 // Flags: --experimental-node-8-string-semantics
 'use strict';
 
+require('../common');
 const assert = require('assert');
 const { StringDecoder } = require('string_decoder');
 
@@ -52,7 +53,9 @@ assert.deepStrictEqual(units(viewed), [0xe4, 0xb8, 0xad, 0xff]);
 assert.strictEqual(Buffer.from(viewed, 'utf8').toString('hex'), 'e4b8adff');
 
 decoder = new StringDecoder('latin1');
-assert.deepStrictEqual(units(decodeHex(decoder, 'ff')), [0xff]);
+const latin1 = decodeHex(decoder, 'ff');
+assert.strictEqual(latin1, 'ÿ');
+assert.deepStrictEqual(units(latin1), [0xc3, 0xbf]);
 
 decoder = new StringDecoder('utf16le');
 assert.strictEqual(decodeHex(decoder, '3dd84ddc'), '\ud83d\udc4d');

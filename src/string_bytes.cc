@@ -214,6 +214,34 @@ size_t WriteWtf8AsUtf16(const uint8_t* data,
   return written;
 }
 
+size_t WriteWtf8AsLatin1(const uint8_t* data,
+                         size_t length,
+                         char* output,
+                         size_t capacity) {
+  size_t written = 0;
+  for (size_t offset = 0; offset < length && written < capacity;) {
+    const DecodedWtf8CodePoint decoded =
+        DecodeWtf8CodePoint(data + offset, length - offset);
+    offset += decoded.byte_length;
+
+    if (decoded.value <= 0xFFFF) {
+      output[written++] =
+          static_cast<char>(static_cast<uint8_t>(decoded.value));
+      continue;
+    }
+
+    const uint32_t supplementary = decoded.value - 0x10000;
+    const uint16_t lead =
+        static_cast<uint16_t>(0xD800 + (supplementary >> 10));
+    output[written++] = static_cast<char>(static_cast<uint8_t>(lead));
+    if (written == capacity) break;
+    const uint16_t trail =
+        static_cast<uint16_t>(0xDC00 + (supplementary & 0x3FF));
+    output[written++] = static_cast<char>(static_cast<uint8_t>(trail));
+  }
+  return written;
+}
+
 template <typename ResourceType, typename TypeName>
 class ExternString: public ResourceType {
  public:
@@ -324,10 +352,10 @@ static MaybeLocal<Value> EncodeOneByteString(Isolate* isolate,
     buf.Release();
     return ExternOneByteString::New(isolate, data, length);
   }
-  return String::NewFromOneByte(isolate,
-                                reinterpret_cast<const uint8_t*>(buf.out()),
-                                v8::NewStringType::kNormal,
-                                static_cast<int>(length));
+  return String::NewFromBytes(isolate,
+                              reinterpret_cast<const uint8_t*>(buf.out()),
+                              v8::NewStringType::kNormal,
+                              static_cast<int>(length));
 }
 
 template <typename EncodeFn>
@@ -352,7 +380,7 @@ static MaybeLocal<Value> EncodeTwoByteString(Isolate* isolate,
 template <>
 MaybeLocal<Value> ExternOneByteString::NewExternal(
     Isolate* isolate, ExternOneByteString* h_str) {
-  return String::NewExternalOneByte(isolate, h_str).FromMaybe(Local<Value>());
+  return String::NewExternalBytes(isolate, h_str).FromMaybe(Local<Value>());
 }
 
 
@@ -367,10 +395,10 @@ MaybeLocal<Value> ExternOneByteString::NewSimpleFromCopy(Isolate* isolate,
                                                          const char* data,
                                                          size_t length) {
   Local<String> str;
-  if (!String::NewFromOneByte(isolate,
-                              reinterpret_cast<const uint8_t*>(data),
-                              v8::NewStringType::kNormal,
-                              length)
+  if (!String::NewFromBytes(isolate,
+                            reinterpret_cast<const uint8_t*>(data),
+                            v8::NewStringType::kNormal,
+                            length)
            .ToLocal(&str)) {
     isolate->ThrowException(node::ERR_STRING_TOO_LONG(isolate));
     return MaybeLocal<Value>();
@@ -468,7 +496,13 @@ size_t StringBytes::Write(Isolate* isolate,
   switch (encoding) {
     case ASCII:
     case LATIN1:
-      if (input_view.is_one_byte()) {
+      if (use_node_8_string_semantics && input_view.is_one_byte()) {
+        nbytes = WriteWtf8AsLatin1(
+            reinterpret_cast<const uint8_t*>(input_view.data8()),
+            input_view.length(),
+            buf,
+            buflen);
+      } else if (input_view.is_one_byte()) {
         nbytes = std::min(buflen, static_cast<size_t>(input_view.length()));
         memcpy(buf, input_view.data8(), nbytes);
       } else {
@@ -484,8 +518,7 @@ size_t StringBytes::Write(Isolate* isolate,
 
     case BUFFER:
     case UTF8:
-      if (encoding == UTF8 && use_node_8_string_semantics &&
-          input_view.is_one_byte()) {
+      if (use_node_8_string_semantics && input_view.is_one_byte()) {
         nbytes = std::min(buflen, static_cast<size_t>(input_view.length()));
         memcpy(buf, input_view.bytes(), nbytes);
       } else if (input_view.is_one_byte()) {
@@ -638,8 +671,7 @@ Maybe<size_t> StringBytes::StorageSize(Isolate* isolate,
 
     case BUFFER:
     case UTF8:
-      if (encoding == UTF8 && use_node_8_string_semantics &&
-          view.is_one_byte()) {
+      if (use_node_8_string_semantics && view.is_one_byte()) {
         data_size = view.length();
       } else {
         // A single UCS2 codepoint never takes up more than 3 utf8 bytes.
@@ -690,12 +722,15 @@ Maybe<size_t> StringBytes::Size(Isolate* isolate,
   switch (encoding) {
     case ASCII:
     case LATIN1:
+      if (use_node_8_string_semantics && view.is_one_byte()) {
+        return Just(Wtf8Utf16Length(
+            reinterpret_cast<const uint8_t*>(view.data8()), view.length()));
+      }
       return Just<size_t>(view.length());
 
     case BUFFER:
     case UTF8:
-      if (encoding == UTF8 && use_node_8_string_semantics &&
-          view.is_one_byte()) {
+      if (use_node_8_string_semantics && view.is_one_byte()) {
         return Just<size_t>(view.length());
       }
       if (view.is_one_byte()) {
@@ -769,6 +804,10 @@ MaybeLocal<Value> StringBytes::Encode(Isolate* isolate,
 
     case UTF8: {
       buflen = keep_buflen_in_range(buflen);
+
+      if (UseNode8StringSemantics(isolate)) {
+        return ExternOneByteString::NewFromCopy(isolate, buf, buflen);
+      }
 
       // ASCII fast path
       // TODO(chalker): remove when String::NewFromUtf8 is fast enough itself
@@ -868,9 +907,18 @@ MaybeLocal<Value> StringBytes::Encode(Isolate* isolate,
       return str;
     }
 
-    case LATIN1:
+    case LATIN1: {
       buflen = keep_buflen_in_range(buflen);
-      return ExternOneByteString::NewFromCopy(isolate, buf, buflen);
+      val = String::NewFromOneByte(isolate,
+                                   reinterpret_cast<const uint8_t*>(buf),
+                                   v8::NewStringType::kNormal,
+                                   buflen);
+      Local<String> str;
+      if (!val.ToLocal(&str)) {
+        isolate->ThrowException(node::ERR_STRING_TOO_LONG(isolate));
+      }
+      return str;
+    }
 
     case BASE64: {
       buflen = keep_buflen_in_range(buflen);
@@ -948,6 +996,10 @@ MaybeLocal<Value> StringBytes::EncodeValidUtf8(Isolate* isolate,
   CHECK_BUFLEN_IN_RANGE(buflen);
   if (!buflen) return String::Empty(isolate);
   buflen = keep_buflen_in_range(buflen);
+
+  if (UseNode8StringSemantics(isolate)) {
+    return ExternOneByteString::NewFromCopy(isolate, buf, buflen);
+  }
 
   // ASCII fast path
   if (!simdutf::validate_ascii_with_errors(buf, buflen).error) {
