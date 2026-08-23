@@ -5,15 +5,15 @@
     "base_commit": "b4f23d3619c98bed09af93a21192f6080197a8c6",
     "development_branch": "node-8",
     "v8_embedder_string": "-node.28",
-    "deps_v8_tree": "aabe4c2ff9f7c4d8b354003209b28e7cf7a3529f"
+    "deps_v8_tree": "0bcca9e981f08a8a15294bd369da0ba6ef13661d"
   },
   "v8": {
     "version": "14.6.202.34",
     "upstream_base": "f9116f3bf9a50b0f7925daacfdc6fed503a9dbe2",
-    "integrated_commit": "cd38e9204768eb266bbf3ae94e33555ea1aa063b",
+    "integrated_commit": "7f7169b60f586ef35a6fc65a6c2650f010faafff",
     "development_branch": "node-8"
   },
   "roll": {
-    "patch_sha256": "fee7918b867b762ce8368302798230d11b8b3eeab7faf8aee40d8d13d0f3103e"
+    "patch_sha256": "6912961cca58337512ab1eca42a87a8abf8fefd03c2fd94dd9b780d73833f2d2"
   }
 }
