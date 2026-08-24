@@ -99,7 +99,8 @@ using v8::Value;
 template <typename T>
 static void MakeUtf8String(Isolate* isolate,
                            Local<Value> value,
-                           MaybeStackBuffer<T>* target) {
+                           MaybeStackBuffer<T>* target,
+                           bool well_form_node_8_string = false) {
   Local<String> string;
   if (!value->ToString(isolate->GetCurrentContext()).ToLocal(&string)) return;
   String::ValueView value_view(isolate, string);
@@ -107,6 +108,20 @@ static void MakeUtf8String(Isolate* isolate,
   auto value_length = value_view.length();
 
   if (value_view.is_one_byte()) {
+    if (well_form_node_8_string) {
+      Environment* env = Environment::GetCurrent(isolate);
+      if (env != nullptr && env->experimental_node_8_string_semantics()) {
+        const size_t length =
+            WellFormedUtf8Length(value_view.data8(), value_length, true);
+        target->AllocateSufficientStorage(length + 1);
+        [[maybe_unused]] const size_t written = WriteWellFormedUtf8(
+            value_view.data8(), value_length, target->out(), length, true);
+        DCHECK_EQ(written, length);
+        target->SetLengthAndZeroTerminate(length);
+        return;
+      }
+    }
+
     auto const_char = reinterpret_cast<const char*>(value_view.data8());
     auto expected_length =
         target->capacity() < (static_cast<size_t>(value_length) * 2 + 1)
@@ -137,6 +152,13 @@ Utf8Value::Utf8Value(Isolate* isolate, Local<Value> value) {
   MakeUtf8String(isolate, value, this);
 }
 
+Utf8Value::Utf8Value(Isolate* isolate,
+                     Local<Value> value,
+                     bool well_form_node_8_string) {
+  if (value.IsEmpty()) return;
+
+  MakeUtf8String(isolate, value, this, well_form_node_8_string);
+}
 
 TwoByteValue::TwoByteValue(Isolate* isolate, Local<Value> value) {
   if (value.IsEmpty()) {

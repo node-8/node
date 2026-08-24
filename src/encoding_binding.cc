@@ -81,70 +81,10 @@ InternalFieldInfoBase* BindingData::Serialize(int index) {
 //     https://opensource.org/licenses/Apache-2.0
 namespace {
 constexpr int MAX_SIZE_FOR_STACK_ALLOC = 4096;
-constexpr uint8_t kReplacementBytes[] = {0xEF, 0xBF, 0xBD};
 
 bool UseNode8StringSemantics(Isolate* isolate) {
   Environment* env = Environment::GetCurrent(isolate);
   return env != nullptr && env->experimental_node_8_string_semantics();
-}
-
-bool NeedsReplacement(uint32_t value) {
-  return value == 0xFFFD || (value >= 0xD800 && value <= 0xDFFF);
-}
-
-size_t WellFormedUtf8Length(const uint8_t* data,
-                            size_t length,
-                            bool allow_surrogates) {
-  size_t output_length = 0;
-  for (size_t offset = 0; offset < length;) {
-    const DecodedUtf8CodePoint decoded =
-        DecodeUtf8CodePoint(data + offset, length - offset, allow_surrogates);
-    output_length += NeedsReplacement(decoded.value) ? sizeof(kReplacementBytes)
-                                                     : decoded.byte_length;
-    offset += decoded.byte_length;
-  }
-  return output_length;
-}
-
-size_t WriteWellFormedUtf8(const uint8_t* data,
-                           size_t length,
-                           char* output,
-                           size_t capacity,
-                           bool allow_surrogates,
-                           size_t* input_read = nullptr) {
-  size_t offset = 0;
-  size_t written = 0;
-  while (offset < length && written < capacity) {
-    if (data[offset] <= 0x7F) {
-      const simdutf::result ascii = simdutf::validate_ascii_with_errors(
-          reinterpret_cast<const char*>(data + offset), length - offset);
-      const size_t run_length =
-          ascii.error == simdutf::SUCCESS ? length - offset : ascii.count;
-      const size_t copied = std::min(run_length, capacity - written);
-      memcpy(output + written, data + offset, copied);
-      written += copied;
-      offset += copied;
-      if (copied != run_length) break;
-      continue;
-    }
-
-    const DecodedUtf8CodePoint decoded =
-        DecodeUtf8CodePoint(data + offset, length - offset, allow_surrogates);
-    const bool replace = NeedsReplacement(decoded.value);
-    const size_t output_size =
-        replace ? sizeof(kReplacementBytes) : decoded.byte_length;
-    if (output_size > capacity - written) break;
-
-    if (replace) {
-      memcpy(output + written, kReplacementBytes, output_size);
-    } else {
-      memcpy(output + written, data + offset, output_size);
-    }
-    offset += decoded.byte_length;
-    written += output_size;
-  }
-  if (input_read != nullptr) *input_read = offset;
-  return written;
 }
 
 constexpr bool isSurrogatePair(uint16_t lead, uint16_t trail) {
@@ -632,7 +572,7 @@ void BindingData::ToASCII(const FunctionCallbackInfo<Value>& args) {
   CHECK_GE(args.Length(), 1);
   CHECK(args[0]->IsString());
 
-  Utf8Value input(env->isolate(), args[0]);
+  Utf8Value input(env->isolate(), args[0], true);
   auto out = ada::idna::to_ascii(input.ToStringView());
   Local<Value> ret;
   if (ToV8Value(env->context(), out, env->isolate()).ToLocal(&ret)) {
@@ -645,7 +585,7 @@ void BindingData::ToUnicode(const FunctionCallbackInfo<Value>& args) {
   CHECK_GE(args.Length(), 1);
   CHECK(args[0]->IsString());
 
-  Utf8Value input(env->isolate(), args[0]);
+  Utf8Value input(env->isolate(), args[0], true);
   auto out = ada::idna::to_unicode(input.ToStringView());
   Local<Value> ret;
   if (ToV8Value(env->context(), out, env->isolate()).ToLocal(&ret)) {

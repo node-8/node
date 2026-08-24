@@ -568,6 +568,11 @@ class ArrayBufferViewContents {
 class Utf8Value : public MaybeStackBuffer<char> {
  public:
   explicit Utf8Value(v8::Isolate* isolate, v8::Local<v8::Value> value);
+  // The opt-in path preserves valid node-8 UTF-8 bytes and replaces only
+  // malformed maximal subparts or WTF-8 surrogate code points.
+  Utf8Value(v8::Isolate* isolate,
+            v8::Local<v8::Value> value,
+            bool well_form_node_8_string);
 
   inline bool operator==(const char* a) const { return strcmp(out(), a) == 0; }
   inline bool operator!=(const char* a) const { return !(*this == a); }

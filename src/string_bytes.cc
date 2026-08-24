@@ -52,6 +52,14 @@ using v8::Nothing;
 using v8::String;
 using v8::Value;
 
+namespace {
+constexpr uint8_t kReplacementBytes[] = {0xEF, 0xBF, 0xBD};
+
+bool NeedsReplacement(uint32_t value) {
+  return value == 0xFFFD || (value >= 0xD800 && value <= 0xDFFF);
+}
+}  // namespace
+
 DecodedUtf8CodePoint DecodeUtf8CodePoint(const uint8_t* data,
                                          size_t length,
                                          bool allow_surrogates) {
@@ -91,6 +99,61 @@ DecodedUtf8CodePoint DecodeUtf8CodePoint(const uint8_t* data,
     value = (value << 6) | (next & 0x3F);
   }
   return {value, expected_length};
+}
+
+size_t WellFormedUtf8Length(const uint8_t* data,
+                            size_t length,
+                            bool allow_surrogates) {
+  size_t output_length = 0;
+  for (size_t offset = 0; offset < length;) {
+    const DecodedUtf8CodePoint decoded =
+        DecodeUtf8CodePoint(data + offset, length - offset, allow_surrogates);
+    output_length += NeedsReplacement(decoded.value) ? sizeof(kReplacementBytes)
+                                                     : decoded.byte_length;
+    offset += decoded.byte_length;
+  }
+  return output_length;
+}
+
+size_t WriteWellFormedUtf8(const uint8_t* data,
+                           size_t length,
+                           char* output,
+                           size_t capacity,
+                           bool allow_surrogates,
+                           size_t* input_read) {
+  size_t offset = 0;
+  size_t written = 0;
+  while (offset < length && written < capacity) {
+    if (data[offset] <= 0x7F) {
+      const simdutf::result ascii = simdutf::validate_ascii_with_errors(
+          reinterpret_cast<const char*>(data + offset), length - offset);
+      const size_t run_length =
+          ascii.error == simdutf::SUCCESS ? length - offset : ascii.count;
+      const size_t copied = std::min(run_length, capacity - written);
+      memcpy(output + written, data + offset, copied);
+      written += copied;
+      offset += copied;
+      if (copied != run_length) break;
+      continue;
+    }
+
+    const DecodedUtf8CodePoint decoded =
+        DecodeUtf8CodePoint(data + offset, length - offset, allow_surrogates);
+    const bool replace = NeedsReplacement(decoded.value);
+    const size_t output_size =
+        replace ? sizeof(kReplacementBytes) : decoded.byte_length;
+    if (output_size > capacity - written) break;
+
+    if (replace) {
+      memcpy(output + written, kReplacementBytes, output_size);
+    } else {
+      memcpy(output + written, data + offset, output_size);
+    }
+    offset += decoded.byte_length;
+    written += output_size;
+  }
+  if (input_read != nullptr) *input_read = offset;
+  return written;
 }
 
 namespace {

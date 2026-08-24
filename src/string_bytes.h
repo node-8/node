@@ -44,6 +44,17 @@ DecodedUtf8CodePoint DecodeUtf8CodePoint(const uint8_t* data,
                                          size_t length,
                                          bool allow_surrogates);
 
+size_t WellFormedUtf8Length(const uint8_t* data,
+                            size_t length,
+                            bool allow_surrogates);
+
+size_t WriteWellFormedUtf8(const uint8_t* data,
+                           size_t length,
+                           char* output,
+                           size_t capacity,
+                           bool allow_surrogates,
+                           size_t* input_read = nullptr);
+
 class StringBytes {
  public:
   class InlineDecoder : public MaybeStackBuffer<char> {

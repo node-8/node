@@ -33,6 +33,14 @@ using v8::SnapshotCreator;
 using v8::String;
 using v8::Value;
 
+namespace {
+class UrlValue : public Utf8Value {
+ public:
+  UrlValue(Isolate* isolate, Local<Value> value)
+      : Utf8Value(isolate, value, true) {}
+};
+}  // namespace
+
 void BindingData::MemoryInfo(MemoryTracker* tracker) const {
   tracker->TrackField("url_components_buffer", url_components_buffer_);
 }
@@ -153,7 +161,7 @@ void BindingData::PathToFileURL(const FunctionCallbackInfo<Value>& args) {
   Isolate* isolate = realm->isolate();
   OS os = args[1]->IsTrue() ? OS::WINDOWS : OS::POSIX;
 
-  Utf8Value input(isolate, args[0]);
+  UrlValue input(isolate, args[0]);
   auto input_str = input.ToStringView();
   CHECK(!input_str.empty());
 
@@ -167,7 +175,7 @@ void BindingData::PathToFileURL(const FunctionCallbackInfo<Value>& args) {
   if (os == OS::WINDOWS && args.Length() > 2 && !args[2]->IsUndefined())
       [[unlikely]] {
     CHECK(args[2]->IsString());
-    Utf8Value hostname(isolate, args[2]);
+    UrlValue hostname(isolate, args[2]);
     if (!out->set_hostname(hostname.ToStringView())) {
       return ThrowInvalidURL(realm->env(),
                              input.ToStringView(),
@@ -189,7 +197,7 @@ void BindingData::DomainToASCII(const FunctionCallbackInfo<Value>& args) {
   CHECK_GE(args.Length(), 1);  // input
   CHECK(args[0]->IsString());
 
-  Utf8Value input(env->isolate(), args[0]);
+  UrlValue input(env->isolate(), args[0]);
   if (input.ToStringView().empty()) {
     return args.GetReturnValue().SetEmptyString();
   }
@@ -216,7 +224,7 @@ void BindingData::DomainToUnicode(const FunctionCallbackInfo<Value>& args) {
   CHECK_GE(args.Length(), 1);  // input
   CHECK(args[0]->IsString());
 
-  Utf8Value input(env->isolate(), args[0]);
+  UrlValue input(env->isolate(), args[0]);
   if (input.ToStringView().empty()) {
     return args.GetReturnValue().SetEmptyString();
   }
@@ -245,7 +253,7 @@ void BindingData::GetOrigin(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
   HandleScope handle_scope(env->isolate());
 
-  Utf8Value input(env->isolate(), args[0]);
+  UrlValue input(env->isolate(), args[0]);
   std::string_view input_view = input.ToStringView();
   auto out = ada::parse<ada::url_aggregator>(input_view);
 
@@ -271,12 +279,12 @@ void BindingData::CanParse(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
   HandleScope handle_scope(env->isolate());
 
-  Utf8Value input(env->isolate(), args[0]);
+  UrlValue input(env->isolate(), args[0]);
   std::string_view input_view = input.ToStringView();
 
   bool can_parse{};
   if (args[1]->IsString()) {
-    Utf8Value base(env->isolate(), args[1]);
+    UrlValue base(env->isolate(), args[1]);
     std::string_view base_view = base.ToStringView();
     can_parse = ada::can_parse(input_view, &base_view);
   } else {
@@ -298,7 +306,7 @@ bool BindingData::FastCanParse(
   if (!input->ToString(isolate->GetCurrentContext()).ToLocal(&str)) {
     return false;
   }
-  Utf8Value utf8(isolate, str);
+  UrlValue utf8(isolate, str);
   return ada::can_parse(utf8.ToStringView());
 }
 
@@ -320,8 +328,8 @@ bool BindingData::FastCanParseWithBase(
   if (!base->ToString(context).ToLocal(&base_str)) {
     return false;
   }
-  Utf8Value input_utf8(isolate, input_str);
-  Utf8Value base_utf8(isolate, base_str);
+  UrlValue input_utf8(isolate, input_str);
+  UrlValue base_utf8(isolate, base_str);
 
   auto base_view = base_utf8.ToStringView();
   return ada::can_parse(input_utf8.ToStringView(), &base_view);
@@ -337,7 +345,7 @@ void BindingData::Format(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
   Isolate* isolate = env->isolate();
 
-  Utf8Value href(isolate, args[0].As<String>());
+  UrlValue href(isolate, args[0].As<String>());
   const bool hash = args[1]->IsTrue();
   const bool unicode = args[2]->IsTrue();
   const bool search = args[3]->IsTrue();
@@ -394,11 +402,11 @@ void BindingData::Parse(const FunctionCallbackInfo<Value>& args) {
   Isolate* isolate = realm->isolate();
   std::optional<std::string> base_{};
 
-  Utf8Value input(isolate, args[0]);
+  UrlValue input(isolate, args[0]);
   ada::result<ada::url_aggregator> base;
   ada::url_aggregator* base_pointer = nullptr;
   if (args[1]->IsString()) {
-    base_ = Utf8Value(isolate, args[1]).ToString();
+    base_ = UrlValue(isolate, args[1]).ToString();
     base = ada::parse<ada::url_aggregator>(*base_);
     if (!base && raise_exception) {
       return ThrowInvalidURL(realm->env(), input.ToStringView(), base_);
@@ -439,8 +447,8 @@ void BindingData::Update(const FunctionCallbackInfo<Value>& args) {
     return;
   }
   enum url_update_action action = static_cast<enum url_update_action>(val);
-  Utf8Value input(isolate, args[0].As<String>());
-  Utf8Value new_value(isolate, args[2].As<String>());
+  UrlValue input(isolate, args[0].As<String>());
+  UrlValue new_value(isolate, args[2].As<String>());
 
   std::string_view new_value_view = new_value.ToStringView();
   auto out = ada::parse<ada::url_aggregator>(input.ToStringView());
