@@ -43,6 +43,11 @@ assert.strictEqual(captured[1], cjk);
 const named = /(?<value>[\uFFFD])/u.exec(malformed);
 assert.strictEqual(named[0], malformed.slice(0, 1));
 assert.strictEqual(named.groups.value, named[0]);
+const unicodeNamed = /(?<名字>[^a])/u.exec(cjk);
+assert.strictEqual(unicodeNamed.groups.名字, cjk);
+assert.deepStrictEqual(Object.keys(unicodeNamed.groups), ['名字']);
+const fallbackUnicodeNamed = /(?<名字>[a])b/u.exec('ab');
+assert.strictEqual(fallbackUnicodeNamed.groups.名字, 'a');
 
 const indexed = /(([^é]))/du.exec(subject);
 assert.deepStrictEqual(
