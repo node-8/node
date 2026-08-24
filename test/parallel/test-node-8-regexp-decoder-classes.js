@@ -158,3 +158,28 @@ assert.strictEqual(stickyOptional.exec(eAcute + cjk)[0], '');
 
 const indexedOptional = /[^é]?/du.exec(cjk + eAcute);
 assert.deepStrictEqual(indexedOptional.indices[0], [0, 3]);
+
+const eCircumflex = String.fromCodePoint(0xea);
+const positiveExact = /[é-ë]{2}/u.exec(cjk + eAcute + eCircumflex);
+assert.strictEqual(positiveExact.index, 3);
+assert.strictEqual(positiveExact[0], eAcute + eCircumflex);
+const negatedExact = /[^a]{2}/u.exec('a' + cjk + emoji + 'a');
+assert.strictEqual(negatedExact.index, 1);
+assert.strictEqual(negatedExact[0], cjk + emoji);
+
+const exactGlobalMatches = Array.from(
+  eAcute.repeat(5).matchAll(/[é]{2}/gu));
+assert.deepStrictEqual(
+  exactGlobalMatches.map((match) => match.index), [0, 4]);
+assert.deepStrictEqual(
+  exactGlobalMatches.map((match) => match[0]),
+  [eAcute.repeat(2), eAcute.repeat(2)]);
+
+const stickyExact = /[^a]{2}/uy;
+stickyExact.lastIndex = 1;
+const continuationExact = stickyExact.exec(eAcute + 'b');
+assert.strictEqual(continuationExact.index, 1);
+assert.deepStrictEqual(
+  Array.from({ length: continuationExact[0].length },
+             (_, index) => continuationExact[0].charCodeAt(index)),
+  [0xa9, 0x62]);
