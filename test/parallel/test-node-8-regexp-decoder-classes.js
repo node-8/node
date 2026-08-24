@@ -183,3 +183,28 @@ assert.deepStrictEqual(
   Array.from({ length: continuationExact[0].length },
              (_, index) => continuationExact[0].charCodeAt(index)),
   [0xa9, 0x62]);
+
+const bounded = /[^a]{2,5}/u.exec(cjk + emoji + 'a');
+assert.strictEqual(bounded.index, 0);
+assert.strictEqual(bounded[0], cjk + emoji);
+
+const malformedBoundedSubject = Buffer.from([0xe2, 0x82, 0x62, 0x0a])
+  .toString();
+const malformedBounded = /[^\n]{2,5}/u.exec(malformedBoundedSubject);
+assert.strictEqual(malformedBounded.index, 0);
+assert.strictEqual(malformedBounded[0], malformedBoundedSubject.slice(0, 3));
+
+const boundedTailSubject = cjk + emoji + 'b' + 'a';
+assert.strictEqual(/[^\n]{2,5}a/u.exec(boundedTailSubject)[0],
+                   boundedTailSubject);
+
+const zeroMinBounded = Array.from((cjk + 'a').matchAll(/[^a]{0,3}/gu));
+assert.deepStrictEqual(zeroMinBounded.map((match) => match.index), [0, 3, 4]);
+assert.deepStrictEqual(zeroMinBounded.map((match) => match[0]), [cjk, '', '']);
+
+const stickyBounded = /[^a]{1,2}/uy;
+stickyBounded.lastIndex = 1;
+const continuationBounded = stickyBounded.exec(eAcute + 'a');
+assert.strictEqual(continuationBounded.index, 1);
+assert.strictEqual(continuationBounded[0].length, 1);
+assert.strictEqual(continuationBounded[0].charCodeAt(0), 0xa9);
