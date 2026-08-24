@@ -29,9 +29,20 @@
 #include "v8.h"
 #include "env-inl.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <string>
 
 namespace node {
+
+struct DecodedUtf8CodePoint {
+  uint32_t value;
+  size_t byte_length;
+};
+
+DecodedUtf8CodePoint DecodeUtf8CodePoint(const uint8_t* data,
+                                         size_t length,
+                                         bool allow_surrogates);
 
 class StringBytes {
  public:

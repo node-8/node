@@ -81,6 +81,71 @@ InternalFieldInfoBase* BindingData::Serialize(int index) {
 //     https://opensource.org/licenses/Apache-2.0
 namespace {
 constexpr int MAX_SIZE_FOR_STACK_ALLOC = 4096;
+constexpr uint8_t kReplacementBytes[] = {0xEF, 0xBF, 0xBD};
+
+bool UseNode8StringSemantics(Isolate* isolate) {
+  Environment* env = Environment::GetCurrent(isolate);
+  return env != nullptr && env->experimental_node_8_string_semantics();
+}
+
+bool NeedsReplacement(uint32_t value) {
+  return value == 0xFFFD || (value >= 0xD800 && value <= 0xDFFF);
+}
+
+size_t WellFormedUtf8Length(const uint8_t* data,
+                            size_t length,
+                            bool allow_surrogates) {
+  size_t output_length = 0;
+  for (size_t offset = 0; offset < length;) {
+    const DecodedUtf8CodePoint decoded =
+        DecodeUtf8CodePoint(data + offset, length - offset, allow_surrogates);
+    output_length += NeedsReplacement(decoded.value) ? sizeof(kReplacementBytes)
+                                                     : decoded.byte_length;
+    offset += decoded.byte_length;
+  }
+  return output_length;
+}
+
+size_t WriteWellFormedUtf8(const uint8_t* data,
+                           size_t length,
+                           char* output,
+                           size_t capacity,
+                           bool allow_surrogates,
+                           size_t* input_read = nullptr) {
+  size_t offset = 0;
+  size_t written = 0;
+  while (offset < length && written < capacity) {
+    if (data[offset] <= 0x7F) {
+      const simdutf::result ascii = simdutf::validate_ascii_with_errors(
+          reinterpret_cast<const char*>(data + offset), length - offset);
+      const size_t run_length =
+          ascii.error == simdutf::SUCCESS ? length - offset : ascii.count;
+      const size_t copied = std::min(run_length, capacity - written);
+      memcpy(output + written, data + offset, copied);
+      written += copied;
+      offset += copied;
+      if (copied != run_length) break;
+      continue;
+    }
+
+    const DecodedUtf8CodePoint decoded =
+        DecodeUtf8CodePoint(data + offset, length - offset, allow_surrogates);
+    const bool replace = NeedsReplacement(decoded.value);
+    const size_t output_size =
+        replace ? sizeof(kReplacementBytes) : decoded.byte_length;
+    if (output_size > capacity - written) break;
+
+    if (replace) {
+      memcpy(output + written, kReplacementBytes, output_size);
+    } else {
+      memcpy(output + written, data + offset, output_size);
+    }
+    offset += decoded.byte_length;
+    written += output_size;
+  }
+  if (input_read != nullptr) *input_read = offset;
+  return written;
+}
 
 constexpr bool isSurrogatePair(uint16_t lead, uint16_t trail) {
   return (lead & 0xfc00) == 0xd800 && (trail & 0xfc00) == 0xdc00;
@@ -220,6 +285,18 @@ void BindingData::EncodeInto(const FunctionCallbackInfo<Value>& args) {
   size_t read = 0;
   size_t written = 0;
 
+  if (UseNode8StringSemantics(isolate)) {
+    v8::String::ValueView view(isolate, source);
+    if (view.is_one_byte()) {
+      written = WriteWellFormedUtf8(
+          view.data8(), view.length(), write_result, dest_length, true, &read);
+      binding_data->encode_into_results_buffer_[0] = static_cast<double>(read);
+      binding_data->encode_into_results_buffer_[1] =
+          static_cast<double>(written);
+      return;
+    }
+  }
+
   // For small strings (length <= 32), use the old V8 path for better
   // performance
   static constexpr int kSmallStringThreshold = 32;
@@ -313,6 +390,52 @@ void BindingData::EncodeUtf8String(const FunctionCallbackInfo<Value>& args) {
   CHECK(args[0]->IsString());
 
   Local<String> source = args[0].As<String>();
+
+  bool is_node_8_byte_string = false;
+  bool is_valid_utf8 = false;
+  size_t node_8_output_length = 0;
+  if (UseNode8StringSemantics(isolate)) {
+    v8::String::ValueView view(isolate, source);
+    if (view.is_one_byte()) {
+      is_node_8_byte_string = true;
+      const auto* data = reinterpret_cast<const char*>(view.data8());
+      is_valid_utf8 = simdutf::validate_utf8(data, view.length());
+      node_8_output_length =
+          is_valid_utf8
+              ? view.length()
+              : WellFormedUtf8Length(view.data8(), view.length(), true);
+    }
+  }
+
+  if (is_node_8_byte_string) {
+    std::unique_ptr<BackingStore> bs = ArrayBuffer::NewBackingStore(
+        isolate,
+        node_8_output_length,
+        BackingStoreInitializationMode::kUninitialized,
+        BackingStoreOnFailureMode::kReturnNull);
+    if (!bs) [[unlikely]] {
+      THROW_ERR_MEMORY_ALLOCATION_FAILED(isolate);
+      return;
+    }
+
+    {
+      v8::String::ValueView view(isolate, source);
+      if (is_valid_utf8) {
+        memcpy(bs->Data(), view.data8(), view.length());
+      } else {
+        [[maybe_unused]] const size_t written =
+            WriteWellFormedUtf8(view.data8(),
+                                view.length(),
+                                static_cast<char*>(bs->Data()),
+                                node_8_output_length,
+                                true);
+        DCHECK_EQ(written, node_8_output_length);
+      }
+    }
+    Local<ArrayBuffer> ab = ArrayBuffer::New(isolate, std::move(bs));
+    args.GetReturnValue().Set(Uint8Array::New(ab, 0, node_8_output_length));
+    return;
+  }
 
   // For small strings, use the V8 path
   static constexpr int kSmallStringThreshold = 32;
@@ -481,6 +604,21 @@ void BindingData::DecodeUTF8(const FunctionCallbackInfo<Value>& args) {
   if (length == 0) return args.GetReturnValue().SetEmptyString();
 
   Local<Value> ret;
+  if (!has_fatal && UseNode8StringSemantics(env->isolate()) &&
+      !simdutf::validate_utf8(data, length)) {
+    const auto* bytes = reinterpret_cast<const uint8_t*>(data);
+    const size_t output_length = WellFormedUtf8Length(bytes, length, false);
+    MaybeStackBuffer<char, 512> output(output_length);
+    [[maybe_unused]] const size_t written =
+        WriteWellFormedUtf8(bytes, length, output.out(), output_length, false);
+    DCHECK_EQ(written, output_length);
+    if (StringBytes::EncodeValidUtf8(
+            env->isolate(), output.out(), output_length)
+            .ToLocal(&ret)) {
+      args.GetReturnValue().Set(ret);
+    }
+    return;
+  }
   v8::MaybeLocal<Value> encoded =
       has_fatal ? StringBytes::EncodeValidUtf8(env->isolate(), data, length)
                 : StringBytes::Encode(env->isolate(), data, length, UTF8);

@@ -52,6 +52,47 @@ using v8::Nothing;
 using v8::String;
 using v8::Value;
 
+DecodedUtf8CodePoint DecodeUtf8CodePoint(const uint8_t* data,
+                                         size_t length,
+                                         bool allow_surrogates) {
+  const uint8_t first = data[0];
+  if (first <= 0x7F) return {first, 1};
+
+  size_t expected_length;
+  uint8_t second_min = 0x80;
+  uint8_t second_max = 0xBF;
+  uint32_t value;
+  if (first >= 0xC2 && first <= 0xDF) {
+    expected_length = 2;
+    value = first & 0x1F;
+  } else if (first >= 0xE0 && first <= 0xEF) {
+    expected_length = 3;
+    value = first & 0x0F;
+    if (first == 0xE0) second_min = 0xA0;
+    if (first == 0xED && !allow_surrogates) second_max = 0x9F;
+  } else if (first >= 0xF0 && first <= 0xF4) {
+    expected_length = 4;
+    value = first & 0x07;
+    if (first == 0xF0) second_min = 0x90;
+    if (first == 0xF4) second_max = 0x8F;
+  } else {
+    return {0xFFFD, 1};
+  }
+
+  if (length == 1) return {0xFFFD, 1};
+  const uint8_t second = data[1];
+  if (second < second_min || second > second_max) return {0xFFFD, 1};
+  value = (value << 6) | (second & 0x3F);
+
+  for (size_t i = 2; i < expected_length; i++) {
+    if (i == length) return {0xFFFD, i};
+    const uint8_t next = data[i];
+    if (next < 0x80 || next > 0xBF) return {0xFFFD, i};
+    value = (value << 6) | (next & 0x3F);
+  }
+  return {value, expected_length};
+}
+
 namespace {
 
 bool UseNode8StringSemantics(Isolate* isolate) {
@@ -128,55 +169,11 @@ void WriteWtf8FromUtf16Le(const char* data,
   });
 }
 
-struct DecodedWtf8CodePoint {
-  uint32_t value;
-  size_t byte_length;
-};
-
-DecodedWtf8CodePoint DecodeWtf8CodePoint(const uint8_t* data, size_t length) {
-  const uint8_t first = data[0];
-  if (first <= 0x7F) return {first, 1};
-
-  size_t expected_length;
-  uint8_t second_min = 0x80;
-  uint8_t second_max = 0xBF;
-  uint32_t value;
-  if (first >= 0xC2 && first <= 0xDF) {
-    expected_length = 2;
-    value = first & 0x1F;
-  } else if (first >= 0xE0 && first <= 0xEF) {
-    expected_length = 3;
-    value = first & 0x0F;
-    if (first == 0xE0) second_min = 0xA0;
-    // WTF-8 intentionally permits surrogate code points after 0xED.
-  } else if (first >= 0xF0 && first <= 0xF4) {
-    expected_length = 4;
-    value = first & 0x07;
-    if (first == 0xF0) second_min = 0x90;
-    if (first == 0xF4) second_max = 0x8F;
-  } else {
-    return {0xFFFD, 1};
-  }
-
-  if (length == 1) return {0xFFFD, 1};
-  const uint8_t second = data[1];
-  if (second < second_min || second > second_max) return {0xFFFD, 1};
-  value = (value << 6) | (second & 0x3F);
-
-  for (size_t i = 2; i < expected_length; i++) {
-    if (i == length) return {0xFFFD, i};
-    const uint8_t next = data[i];
-    if (next < 0x80 || next > 0xBF) return {0xFFFD, i};
-    value = (value << 6) | (next & 0x3F);
-  }
-  return {value, expected_length};
-}
-
 size_t Wtf8Utf16Length(const uint8_t* data, size_t length) {
   size_t utf16_length = 0;
   for (size_t offset = 0; offset < length;) {
-    const DecodedWtf8CodePoint decoded =
-        DecodeWtf8CodePoint(data + offset, length - offset);
+    const DecodedUtf8CodePoint decoded =
+        DecodeUtf8CodePoint(data + offset, length - offset, true);
     utf16_length += decoded.value > 0xFFFF ? 2 : 1;
     offset += decoded.byte_length;
   }
@@ -189,8 +186,8 @@ size_t WriteWtf8AsUtf16(const uint8_t* data,
                         size_t capacity) {
   size_t written = 0;
   for (size_t offset = 0; offset < length && written < capacity;) {
-    const DecodedWtf8CodePoint decoded =
-        DecodeWtf8CodePoint(data + offset, length - offset);
+    const DecodedUtf8CodePoint decoded =
+        DecodeUtf8CodePoint(data + offset, length - offset, true);
     offset += decoded.byte_length;
 
     uint16_t code_unit;
@@ -220,8 +217,8 @@ size_t WriteWtf8AsLatin1(const uint8_t* data,
                          size_t capacity) {
   size_t written = 0;
   for (size_t offset = 0; offset < length && written < capacity;) {
-    const DecodedWtf8CodePoint decoded =
-        DecodeWtf8CodePoint(data + offset, length - offset);
+    const DecodedUtf8CodePoint decoded =
+        DecodeUtf8CodePoint(data + offset, length - offset, true);
     offset += decoded.byte_length;
 
     if (decoded.value <= 0xFFFF) {
