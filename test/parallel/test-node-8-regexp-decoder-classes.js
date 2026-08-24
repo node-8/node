@@ -183,3 +183,34 @@ assert.deepStrictEqual(
   Array.from({ length: continuationExact[0].length },
              (_, index) => continuationExact[0].charCodeAt(index)),
   [0xa9, 0x62]);
+
+const bounded = /[é-ë]{2,3}/u.exec(cjk + eAcute.repeat(4));
+assert.strictEqual(bounded.index, 3);
+assert.strictEqual(bounded[0], eAcute.repeat(3));
+const negatedBounded = /[^a]{2,3}/u.exec(
+  'a' + cjk + emoji + eAcute + 'a');
+assert.strictEqual(negatedBounded.index, 1);
+assert.strictEqual(negatedBounded[0], cjk + emoji + eAcute);
+
+const boundedGlobalMatches = Array.from(
+  eAcute.repeat(7).matchAll(/[é]{2,3}/gu));
+assert.deepStrictEqual(
+  boundedGlobalMatches.map((match) => match.index), [0, 6]);
+assert.deepStrictEqual(
+  boundedGlobalMatches.map((match) => match[0]),
+  [eAcute.repeat(3), eAcute.repeat(3)]);
+
+const zeroMinMatches = Array.from(
+  (eAcute.repeat(3) + 'a').matchAll(/[é]{0,2}/gu));
+assert.deepStrictEqual(
+  zeroMinMatches.map((match) => match.index), [0, 4, 6, 7]);
+assert.deepStrictEqual(
+  zeroMinMatches.map((match) => match[0]),
+  [eAcute.repeat(2), eAcute, '', '']);
+
+const stickyBounded = /[^a]{1,2}/uy;
+stickyBounded.lastIndex = 1;
+const continuationBounded = stickyBounded.exec(eAcute + cjk);
+assert.strictEqual(continuationBounded.index, 1);
+assert.strictEqual(continuationBounded[0].length, 4);
+assert.strictEqual(continuationBounded[0].charCodeAt(0), 0xa9);
