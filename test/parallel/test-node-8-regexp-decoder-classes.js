@@ -57,3 +57,25 @@ const nestedGlobal = Array.from(subject.matchAll(/(([^\x00-\x7f]))/gu));
 assert.deepStrictEqual(nestedGlobal.map((match) => match.index), [0, 2]);
 assert.deepStrictEqual(nestedGlobal.map((match) => match[1]), [eAcute, cjk]);
 assert.deepStrictEqual(nestedGlobal.map((match) => match[2]), [eAcute, cjk]);
+
+const emoji = String.fromCodePoint(0x1f600);
+const plusSubject = eAcute + cjk + cjk + 'a' + eAcute + emoji + emoji + 'b';
+const plusMatches = Array.from(plusSubject.matchAll(/[^é]+/gu));
+assert.deepStrictEqual(plusMatches.map((match) => match.index), [2, 11]);
+assert.deepStrictEqual(
+  plusMatches.map((match) => match[0]),
+  [cjk + cjk + 'a', emoji + emoji + 'b']);
+
+const positivePlus = /[é]+/u.exec(eAcute + eAcute + cjk);
+assert.strictEqual(positivePlus.index, 0);
+assert.strictEqual(positivePlus[0], eAcute + eAcute);
+const malformedPlus = /[\uFFFD]+/u.exec(
+  Buffer.from([0x80, 0x81, 0x61]).toString());
+assert.strictEqual(malformedPlus.index, 0);
+assert.strictEqual(malformedPlus[0].length, 2);
+
+const stickyPlus = /[^é]+/uy;
+stickyPlus.lastIndex = 2;
+assert.strictEqual(stickyPlus.exec(eAcute + cjk + cjk)[0], cjk + cjk);
+stickyPlus.lastIndex = 0;
+assert.strictEqual(stickyPlus.exec(eAcute + cjk), null);
