@@ -120,3 +120,41 @@ assert.strictEqual(stickyStar.exec(eAcute + cjk)[0], '');
 
 const indexedStar = /[^é]*/du.exec(cjk + eAcute);
 assert.deepStrictEqual(indexedStar.indices[0], [0, 3]);
+
+const negatedOptional = /[^é]?/u.exec(cjk + eAcute);
+assert.strictEqual(negatedOptional.index, 0);
+assert.strictEqual(negatedOptional[0], cjk);
+const positiveOptional = /[é]?/u.exec(eAcute + cjk);
+assert.strictEqual(positiveOptional.index, 0);
+assert.strictEqual(positiveOptional[0], eAcute);
+assert.strictEqual(/[é]?/u.exec(cjk)[0], '');
+
+const optionalSubject = Buffer.from([0x80, 0x81, 0x61]).toString();
+const optionalMatches = Array.from(optionalSubject.matchAll(/[\uFFFD]?/gu));
+assert.deepStrictEqual(
+  optionalMatches.map((match) => match.index), [0, 1, 2, 3]);
+assert.deepStrictEqual(
+  optionalMatches.map((match) => match[0].length), [1, 1, 0, 0]);
+
+const negatedAsciiOptionalMatches = Array.from(
+  (cjk + 'a').matchAll(/[^a]?/gu));
+assert.deepStrictEqual(
+  negatedAsciiOptionalMatches.map((match) => match.index), [0, 3, 4]);
+assert.deepStrictEqual(
+  negatedAsciiOptionalMatches.map((match) => match[0]), [cjk, '', '']);
+
+const positiveAsciiOptionalMatches = Array.from(
+  (cjk + 'a').matchAll(/[a-z]?/gu));
+assert.deepStrictEqual(
+  positiveAsciiOptionalMatches.map((match) => match.index), [0, 1, 2, 3, 4]);
+assert.deepStrictEqual(
+  positiveAsciiOptionalMatches.map((match) => match[0]), ['', '', '', 'a', '']);
+
+const stickyOptional = /[^é]?/uy;
+stickyOptional.lastIndex = 2;
+assert.strictEqual(stickyOptional.exec(eAcute + cjk)[0], cjk);
+stickyOptional.lastIndex = 0;
+assert.strictEqual(stickyOptional.exec(eAcute + cjk)[0], '');
+
+const indexedOptional = /[^é]?/du.exec(cjk + eAcute);
+assert.deepStrictEqual(indexedOptional.indices[0], [0, 3]);
