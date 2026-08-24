@@ -1802,7 +1802,7 @@ static void Query(const FunctionCallbackInfo<Value>& args) {
   Local<String> string = args[1].As<String>();
   auto wrap = std::make_unique<Wrap>(channel, req_wrap_obj);
 
-  node::Utf8Value utf8name(args.GetIsolate(), string);
+  node::Utf8Value utf8name(args.GetIsolate(), string, true);
   auto plain_name = utf8name.ToStringView();
   std::string name = ada::idna::to_ascii(plain_name);
 
@@ -1982,7 +1982,7 @@ void GetAddrInfo(const FunctionCallbackInfo<Value>& args) {
   CHECK(args[2]->IsInt32());
   CHECK(args[4]->IsUint32());
   Local<Object> req_wrap_obj = args[0].As<Object>();
-  node::Utf8Value hostname(env->isolate(), args[1]);
+  node::Utf8Value hostname(env->isolate(), args[1], true);
 
   ERR_ACCESS_DENIED_IF_INSUFFICIENT_PERMISSIONS(
       env, permission::PermissionScope::kNet, hostname.ToStringView(), args);

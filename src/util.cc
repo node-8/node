@@ -108,9 +108,8 @@ static void MakeUtf8String(Isolate* isolate,
   auto value_length = value_view.length();
 
   if (value_view.is_one_byte()) {
-    if (well_form_node_8_string) {
-      Environment* env = Environment::GetCurrent(isolate);
-      if (env != nullptr && env->experimental_node_8_string_semantics()) {
+    if (value_view.uses_utf8_semantics()) {
+      if (well_form_node_8_string) {
         const size_t length =
             WellFormedUtf8Length(value_view.data8(), value_length, true);
         target->AllocateSufficientStorage(length + 1);
@@ -120,6 +119,11 @@ static void MakeUtf8String(Isolate* isolate,
         target->SetLengthAndZeroTerminate(length);
         return;
       }
+
+      target->AllocateSufficientStorage(value_length + 1);
+      std::memcpy(target->out(), value_view.data8(), value_length);
+      target->SetLengthAndZeroTerminate(value_length);
+      return;
     }
 
     auto const_char = reinterpret_cast<const char*>(value_view.data8());

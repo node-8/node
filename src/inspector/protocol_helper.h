@@ -18,7 +18,7 @@ inline std::unique_ptr<v8_inspector::StringBuffer> ToInspectorString(
 // Convert a V8 string to node::inspector::protocol::String, encoded in UTF8.
 inline protocol::String ToProtocolString(v8::Isolate* isolate,
                                          v8::Local<v8::Value> value) {
-  Utf8Value buffer(isolate, value);
+  Utf8Value buffer(isolate, value, true);
   return buffer.ToString();
 }
 

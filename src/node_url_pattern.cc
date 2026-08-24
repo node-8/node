@@ -396,7 +396,7 @@ std::optional<ada::url_pattern_init> URLPattern::URLPatternInit::FromJsObject(
     Utf8Value key(isolate, component);
     if (obj->Get(env->context(), component).ToLocal(&value)) {
       if (value->IsString()) {
-        Utf8Value utf8_value(isolate, value);
+        Utf8Value utf8_value(isolate, value, true);
         set_parameter(key.ToStringView(), utf8_value.ToStringView());
       }
     } else {
@@ -582,7 +582,7 @@ void URLPattern::Exec(const FunctionCallbackInfo<Value>& args) {
   if (args.Length() == 0 || args[0]->IsNullOrUndefined()) {
     input = ada::url_pattern_init{};
   } else if (args[0]->IsString()) {
-    Utf8Value input_value(env->isolate(), args[0].As<String>());
+    Utf8Value input_value(env->isolate(), args[0].As<String>(), true);
     input_base = input_value.ToString();
     input = std::string_view(input_base);
   } else if (args[0]->IsObject()) {
@@ -599,7 +599,7 @@ void URLPattern::Exec(const FunctionCallbackInfo<Value>& args) {
     if (args[1]->IsNull()) {
       baseURL = std::string("null");
     } else if (args[1]->IsString()) {
-      Utf8Value base_url_value(env->isolate(), args[1].As<String>());
+      Utf8Value base_url_value(env->isolate(), args[1].As<String>(), true);
       baseURL = base_url_value.ToStringView();
     } else {
       THROW_ERR_INVALID_ARG_TYPE(env, "baseURL must be a string");
@@ -628,7 +628,7 @@ void URLPattern::Test(const FunctionCallbackInfo<Value>& args) {
   if (args.Length() == 0 || args[0]->IsNullOrUndefined()) {
     input = ada::url_pattern_init{};
   } else if (args[0]->IsString()) {
-    Utf8Value input_value(env->isolate(), args[0].As<String>());
+    Utf8Value input_value(env->isolate(), args[0].As<String>(), true);
     input_base = input_value.ToString();
     input = std::string_view(input_base);
   } else if (args[0]->IsObject()) {
@@ -645,7 +645,7 @@ void URLPattern::Test(const FunctionCallbackInfo<Value>& args) {
     if (args[1]->IsNull()) {
       baseURL = std::string("null");
     } else if (args[1]->IsString()) {
-      Utf8Value base_url_value(env->isolate(), args[1].As<String>());
+      Utf8Value base_url_value(env->isolate(), args[1].As<String>(), true);
       baseURL = base_url_value.ToStringView();
     } else {
       THROW_ERR_INVALID_ARG_TYPE(env, "baseURL must be a string");
