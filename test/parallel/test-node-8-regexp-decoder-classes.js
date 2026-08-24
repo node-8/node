@@ -79,3 +79,44 @@ stickyPlus.lastIndex = 2;
 assert.strictEqual(stickyPlus.exec(eAcute + cjk + cjk)[0], cjk + cjk);
 stickyPlus.lastIndex = 0;
 assert.strictEqual(stickyPlus.exec(eAcute + cjk), null);
+
+const negatedStar = /[^é]*/u.exec(cjk + cjk + eAcute);
+assert.strictEqual(negatedStar.index, 0);
+assert.strictEqual(negatedStar[0], cjk + cjk);
+const positiveStar = /[é]*/u.exec(eAcute + eAcute + cjk);
+assert.strictEqual(positiveStar.index, 0);
+assert.strictEqual(positiveStar[0], eAcute + eAcute);
+assert.strictEqual(/[é]*/u.exec(cjk)[0], '');
+
+const malformedStarSubject = Buffer.from([0x80, 0x61, 0x81]).toString();
+const malformedStarMatches = Array.from(
+  malformedStarSubject.matchAll(/[\uFFFD]*/gu));
+assert.deepStrictEqual(
+  malformedStarMatches.map((match) => match.index), [0, 1, 2, 3]);
+assert.deepStrictEqual(
+  malformedStarMatches.map((match) => match[0].length), [1, 0, 1, 0]);
+assert.strictEqual(
+  malformedStarSubject.replace(/[\uFFFD]*/gu, 'X'), 'XXaXX');
+
+const continuationStarMatches = Array.from(eAcute.matchAll(/[\uFFFD]*/gu));
+assert.deepStrictEqual(
+  continuationStarMatches.map((match) => match.index), [0, 1, 2]);
+assert.deepStrictEqual(
+  continuationStarMatches.map((match) => match[0].length), [0, 1, 0]);
+assert.strictEqual(continuationStarMatches[1][0].charCodeAt(0), 0xa9);
+
+const asciiStarSubject = cjk + '\n' + cjk;
+const asciiStarMatches = Array.from(asciiStarSubject.matchAll(/[^\n]*/gu));
+assert.deepStrictEqual(
+  asciiStarMatches.map((match) => match.index), [0, 3, 4, 7]);
+assert.deepStrictEqual(
+  asciiStarMatches.map((match) => match[0]), [cjk, '', cjk, '']);
+
+const stickyStar = /[^é]*/uy;
+stickyStar.lastIndex = 2;
+assert.strictEqual(stickyStar.exec(eAcute + cjk + cjk)[0], cjk + cjk);
+stickyStar.lastIndex = 0;
+assert.strictEqual(stickyStar.exec(eAcute + cjk)[0], '');
+
+const indexedStar = /[^é]*/du.exec(cjk + eAcute);
+assert.deepStrictEqual(indexedStar.indices[0], [0, 3]);
