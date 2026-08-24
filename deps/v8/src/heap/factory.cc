@@ -4470,6 +4470,7 @@ DirectHandle<RegExpData> Factory::NewIrRegExpData(DirectHandle<String> source,
   instance->clear_uc16_code();
   instance->clear_latin1_bytecode();
   instance->clear_uc16_bytecode();
+  instance->clear_node8_class_ranges();
   instance->set_capture_name_map(Smi::FromInt(JSRegExp::kUninitializedValue));
   instance->set_max_register_count(JSRegExp::kUninitializedValue);
   instance->set_capture_count(capture_count);
@@ -4508,6 +4509,7 @@ DirectHandle<RegExpData> Factory::NewExperimentalRegExpData(
   instance->clear_uc16_code();
   instance->clear_latin1_bytecode();
   instance->clear_uc16_bytecode();
+  instance->clear_node8_class_ranges();
   instance->set_capture_name_map(Smi::FromInt(JSRegExp::kUninitializedValue));
   instance->set_max_register_count(JSRegExp::kUninitializedValue);
   instance->set_capture_count(capture_count);
