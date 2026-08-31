@@ -100,6 +100,8 @@ assert.deepStrictEqual(
     eAcute + eCircumflex).indices),
   [[0, 4], [0, 4], [2, 4]]);
 
-// Pure-outer unbounded prefix-tail remains outside this selector.
-assert.strictEqual(/(([A-C\u00e9-\u00eb]+))xy/du.exec(
-  eAcute + eCircumflex + 'xy'), null);
+// Pure-outer unbounded prefix-tail uses the fixed-loop scalar path.
+assert.deepStrictEqual(
+  Array.from(/(([A-C\u00e9-\u00eb]+))xy/du.exec(
+    eAcute + eCircumflex + 'xy').indices),
+  [[0, 6], [0, 4], [0, 4]]);
