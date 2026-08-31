@@ -127,10 +127,10 @@ assert.strictEqual(
   /prefix-1234567890(([A-C\u00e9-\u00eb])+)xy/du.exec(
     prefix17 + eAcute + eCircumflex + 'xy'),
   null);
-assert.strictEqual(
-  /(([A-C\u00e9-\u00eb]){1,9})123456789/du.exec(
-    eAcute + eCircumflex + tail9),
-  null);
+assertMatchIndices(
+  [[0, 13], [0, 4], [2, 4]],
+  /(([A-C\u00e9-\u00eb]){1,9})123456789/du,
+  eAcute + eCircumflex + tail9);
 assert.strictEqual(
   /(([A-C\u00e9-\u00eb])+)\u4e2d/du.exec(eAcute + eCircumflex + cjk),
   null);
