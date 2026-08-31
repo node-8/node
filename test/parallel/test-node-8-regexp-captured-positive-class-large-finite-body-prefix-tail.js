@@ -110,10 +110,10 @@ assert.strictEqual(
   /(([A-C\u00e9-\u00eb]{1,20}))xy/du.exec(
     eAcute + eCircumflex + 'xy'),
   null);
-assert.strictEqual(
-  /(([A-C\u00e9-\u00eb]){20})xy/du.exec(
-    (eAcute + eCircumflex).repeat(10) + 'xy'),
-  null);
+assertMatchIndices(
+  [[0, 42], [0, 40], [38, 40]],
+  /(([A-C\u00e9-\u00eb]){20})xy/du,
+  (eAcute + eCircumflex).repeat(10) + 'xy');
 assertMatchIndices(
   [[0, 21], [0, 4], [2, 4]],
   /(([A-C\u00e9-\u00eb]){1,20})1234567890abcdefg/du,
