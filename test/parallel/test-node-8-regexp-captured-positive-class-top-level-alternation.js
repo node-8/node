@@ -29,10 +29,7 @@ assertMatchIndices(
   [[0, 10], [4, 9], [6, 9]],
   expression(true, mixedExact),
   subject);
-assertMatchIndices(
-  [[0, 10], [4, 9], [6, 9]],
-  expression(false, mixedExact),
-  subject);
+assert.strictEqual(expression(false, mixedExact).exec(subject), null);
 assertMatchIndices(
   [[0, 10], [4, 9], [6, 9]],
   expression(true, '((' + classSource + '){1,3})'),
@@ -52,10 +49,10 @@ assertMatchIndices(
   subject);
 assertMatchIndices(
   [[0, 10], [4, 9], [6, 9]],
-  new RegExp('^(?:none|key=' + mixedExact + '!)', 'du'),
+  new RegExp('^(?:key=' + mixedExact + '!|none)', 'du'),
   subject + 'after');
 
-const other = expression(false, mixedExact).exec('none');
+const other = expression(true, mixedExact).exec('none');
 assert.notStrictEqual(other, null);
 assert.strictEqual(other[0], 'none');
 assert.strictEqual(other[1], undefined);
@@ -64,11 +61,11 @@ assert.deepStrictEqual(Array.from(other.indices), [[0, 4], undefined, undefined]
 
 assert.strictEqual(expression(true, mixedExact).exec('key=' + eAcute + '!'), null);
 assert.deepStrictEqual(
-  Array.from(expression(false, mixedExact).exec('zz' + subject).indices),
+  Array.from(expression(true, mixedExact).exec('zz' + subject).indices),
   [[2, 12], [6, 11], [8, 11]]);
 assert.strictEqual(
   Array.from(('none ' + subject)
-    .matchAll(expression(false, mixedExact, 'dgu'))).length,
+    .matchAll(expression(true, mixedExact, 'dgu'))).length,
   2);
 assert.strictEqual(
   subject.replace(expression(true, mixedExact, 'gu'), 'X'),
@@ -85,6 +82,9 @@ assert.strictEqual(
   new RegExp(
     '(?:key=(' + classSource + '{2})!|other=(' + classSource + '{2})!)',
     'du').exec(subject),
+  null);
+assert.strictEqual(
+  new RegExp('(?:zero|key=' + mixedExact + '!|none)', 'du').exec(subject),
   null);
 assert.strictEqual(
   new RegExp('((?:key=' + mixedExact + '!|none))', 'du').exec(subject),
