@@ -100,7 +100,8 @@ assert.strictEqual(
     })),
   'Y');
 
-// Existing and adjacent excluded selectors remain unchanged.
+// Existing selectors remain unchanged; the long-ASCII extension handles the
+// former 17-byte control.
 assertMatchIndices(
   [[0, 6], [0, 4], [2, 4]],
   /(([A-C\u00e9-\u00eb]){1,8})xy/du,
@@ -113,10 +114,10 @@ assert.strictEqual(
   /(([A-C\u00e9-\u00eb]){20})xy/du.exec(
     (eAcute + eCircumflex).repeat(10) + 'xy'),
   null);
-assert.strictEqual(
-  /(([A-C\u00e9-\u00eb]){1,20})1234567890abcdefg/du.exec(
-    eAcute + eCircumflex + '1234567890abcdefg'),
-  null);
+assertMatchIndices(
+  [[0, 21], [0, 4], [2, 4]],
+  /(([A-C\u00e9-\u00eb]){1,20})1234567890abcdefg/du,
+  eAcute + eCircumflex + '1234567890abcdefg');
 assert.strictEqual(
   /(([A-C\u00e9-\u00eb]){1,20})\u4e2d/du.exec(
     eAcute + eCircumflex + cjk),

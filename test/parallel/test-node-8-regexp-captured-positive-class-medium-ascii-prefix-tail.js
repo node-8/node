@@ -114,19 +114,20 @@ assert.strictEqual(
     })),
   'Y');
 
-// The old 8-byte boundary remains supported; exclusions stay unchanged.
+// The old 8-byte boundary remains supported; the long-ASCII extension handles
+// the former 17-byte controls.
 assertMatchIndices(
   [[0, 12], [0, 4], [0, 4]],
   /(([A-C\u00e9-\u00eb]+))12345678/du,
   eAcute + eCircumflex + '12345678');
-assert.strictEqual(
-  /(([A-C\u00e9-\u00eb])+)1234567890abcdefg/du.exec(
-    eAcute + eCircumflex + tail17),
-  null);
-assert.strictEqual(
-  /prefix-1234567890(([A-C\u00e9-\u00eb])+)xy/du.exec(
-    prefix17 + eAcute + eCircumflex + 'xy'),
-  null);
+assertMatchIndices(
+  [[0, 21], [0, 4], [2, 4]],
+  /(([A-C\u00e9-\u00eb])+)1234567890abcdefg/du,
+  eAcute + eCircumflex + tail17);
+assertMatchIndices(
+  [[0, 23], [17, 21], [19, 21]],
+  /prefix-1234567890(([A-C\u00e9-\u00eb])+)xy/du,
+  prefix17 + eAcute + eCircumflex + 'xy');
 assertMatchIndices(
   [[0, 13], [0, 4], [2, 4]],
   /(([A-C\u00e9-\u00eb]){1,9})123456789/du,
