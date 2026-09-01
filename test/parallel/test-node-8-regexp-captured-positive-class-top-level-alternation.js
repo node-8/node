@@ -89,9 +89,10 @@ assert.strictEqual(
 assert.strictEqual(
   new RegExp('((?:key=' + mixedExact + '!|none))', 'du').exec(subject),
   null);
-assert.strictEqual(
-  new RegExp('(?:^key=' + mixedExact + '!|none)', 'du').exec(subject),
-  null);
+assertMatchIndices(
+  [[0, 10], [4, 9], [6, 9]],
+  new RegExp('(?:^key=' + mixedExact + '!|none)', 'du'),
+  subject);
 assert.strictEqual(
   new RegExp('^(?:key=((' + classSource + '+))!|none)$', 'du').exec(subject),
   null);
