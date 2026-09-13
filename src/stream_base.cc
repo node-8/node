@@ -223,11 +223,10 @@ int StreamBase::Writev(const FunctionCallbackInfo<Value>& args) {
         return -1;
       enum encoding encoding = ParseEncoding(isolate, next_chunk);
       size_t chunk_size;
-      if ((encoding == UTF8 &&
-             string->Length() > 65535 &&
-             !StringBytes::Size(isolate, string, encoding).To(&chunk_size)) ||
-              !StringBytes::StorageSize(isolate, string, encoding)
-                  .To(&chunk_size)) {
+      if (!(encoding == UTF8 && string->Length() > 65535
+                ? StringBytes::Size(isolate, string, encoding)
+                : StringBytes::StorageSize(isolate, string, encoding))
+               .To(&chunk_size)) {
         return -1;
       }
       storage_size += chunk_size;
@@ -355,10 +354,10 @@ int StreamBase::WriteString(const FunctionCallbackInfo<Value>& args) {
   // For UTF8 strings that are very long, go ahead and take the hit for
   // computing their actual size, rather than tripling the storage.
   size_t storage_size;
-  if ((enc == UTF8 &&
-         string->Length() > 65535 &&
-         !StringBytes::Size(isolate, string, enc).To(&storage_size)) ||
-          !StringBytes::StorageSize(isolate, string, enc).To(&storage_size)) {
+  if (!(enc == UTF8 && string->Length() > 65535
+            ? StringBytes::Size(isolate, string, enc)
+            : StringBytes::StorageSize(isolate, string, enc))
+           .To(&storage_size)) {
     return -1;
   }
 
