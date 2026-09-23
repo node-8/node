@@ -627,13 +627,17 @@ RegExpTree* UnwrapCaptureChain(RegExpTree* tree, int* capture_count) {
 struct Node8CaseFoldState {
   bool used_extended_syntax = false;
   bool needs_byte_lowering = false;
+  bool saw_original_disjunction = false;
+  int quantifier_count = 0;
 };
 
 bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags, Zone* zone,
                                  ZoneList<RegExpTree*>* output,
                                  Node8CaseFoldState* state, int depth = 0) {
   if (depth > 100) return false;
-  auto append_code_point = [&](base::uc32 code_point) {
+  auto append_code_point = [&](base::uc32 code_point,
+                               ZoneList<RegExpTree*>* destination,
+                               bool non_ascii_only = false) {
     // Replacement matching also needs malformed-subpart decoding.
     if (code_point == unibrow::Utf8::kBadChar) return false;
     auto* ranges =
@@ -649,6 +653,7 @@ bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags, Zone* zon
     }
     ZoneVector<Node8ByteSequence> sequences(zone);
     for (CharacterRange range : *ranges) {
+      if (non_ascii_only && range.from() <= 0x7f) return false;
       state->needs_byte_lowering |= range.to() > 0x7f;
       if (!AddNode8CodePointRange(range, &sequences)) return false;
     }
@@ -657,10 +662,10 @@ bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags, Zone* zon
     for (const auto& sequence : sequences) {
       choices->Add(NewNode8ByteSequenceTree(sequence, zone), zone);
     }
-    output->Add(choices->length() == 1
-                    ? choices->first()
-                    : zone->New<RegExpDisjunction>(choices),
-                zone);
+    destination->Add(choices->length() == 1
+                         ? choices->first()
+                         : zone->New<RegExpDisjunction>(choices),
+                     zone);
     return true;
   };
   if (tree->IsAtom()) {
@@ -669,12 +674,12 @@ bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags, Zone* zon
       base::uc32 code_point = data[i];
       // Byte parsing preserves astral and surrogate values as uc32 leaves.
       if (code_point >= 0xd800 && code_point <= 0xdfff) return false;
-      if (!append_code_point(code_point)) return false;
+      if (!append_code_point(code_point, output)) return false;
     }
     return true;
   }
   if (auto code_point = GetSingletonClassCodePoint(tree, zone)) {
-    return append_code_point(*code_point);
+    return append_code_point(*code_point, output);
   }
   if (tree->IsText()) {
     for (const auto& element : *tree->AsText()->elements()) {
@@ -695,6 +700,7 @@ bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags, Zone* zon
     return true;
   }
   if (tree->IsDisjunction()) {
+    state->saw_original_disjunction = true;
     auto* branches = tree->AsDisjunction()->alternatives();
     // Larger original choices can use prefix factoring and class merging.
     // Keep them on the original route until lowering preserves those paths.
@@ -713,6 +719,42 @@ bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags, Zone* zon
                    zone);
     }
     output->Add(zone->New<RegExpDisjunction>(choices), zone);
+    state->used_extended_syntax = true;
+    return true;
+  }
+  if (tree->IsQuantifier()) {
+    auto* quantifier = tree->AsQuantifier();
+    if (state->quantifier_count != 0 || !quantifier->is_greedy() ||
+        quantifier->min() > 3 || quantifier->max() != RegExpTree::kInfinity) {
+      return false;
+    }
+    if (++depth > 100) return false;
+    auto* body = quantifier->body();
+    while (body->IsGroup()) {
+      auto* group = body->AsGroup();
+      if (++depth > 100 || group->flags() != flags) return false;
+      body = group->body();
+    }
+    std::optional<base::uc32> code_point;
+    if (body->IsAtom()) {
+      auto data = body->AsAtom()->data();
+      if (data.length() != 1 || (data[0] >= 0xd800 && data[0] <= 0xdfff)) {
+        return false;
+      }
+      code_point = data[0];
+    } else {
+      code_point = GetSingletonClassCodePoint(body, zone);
+    }
+    if (!code_point) return false;
+    ZoneList<RegExpTree*> lowered_body(1, zone);
+    // Keep ASCII and mixed closures on their existing loop/emission paths.
+    if (!append_code_point(*code_point, &lowered_body, true)) return false;
+    output->Add(zone->New<RegExpQuantifier>(
+                    quantifier->min(), quantifier->max(),
+                    quantifier->quantifier_type(), quantifier->index(),
+                    lowered_body.first()),
+                zone);
+    ++state->quantifier_count;
     state->used_extended_syntax = true;
     return true;
   }
@@ -2783,6 +2825,9 @@ bool RegExpImpl::CompileIrregexpFromSource(
     if (AppendNode8CaseFoldedLiteral(original_tree, flags, &zone, &literals,
                                      &state) &&
         !literals.is_empty() && !compile_data.node8_pattern_has_malformed &&
+        (state.quantifier_count == 0 ||
+         (original_tree->IsAnchoredAtStart() &&
+          !state.saw_original_disjunction)) &&
         // Preserve the original matching code for newly admitted ASCII-safe
         // compositions; existing pure-literal lowering remains unchanged.
         (!state.used_extended_syntax || state.needs_byte_lowering)) {
