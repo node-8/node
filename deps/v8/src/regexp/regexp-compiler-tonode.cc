@@ -1283,6 +1283,12 @@ RegExpNode* RegExpAssertion::ToNodeImpl(RegExpCompiler* compiler,
       return node;
     }
     case Type::BOUNDARY: {
+      if (v8_flags.utf8_string_semantics && compiler->one_byte() &&
+          IsIgnoreCase(compiler->flags())) {
+        RegExpNode* node = AssertionNode::Node8FoldedBoundary(true, on_success);
+        REGISTER_NODE(node);
+        return node;
+      }
       RegExpNode* node = NeedsUnicodeCaseEquivalents(compiler->flags())
                              ? BoundaryAssertionAsLookaround(
                                    compiler, on_success, Type::BOUNDARY)
@@ -1291,6 +1297,12 @@ RegExpNode* RegExpAssertion::ToNodeImpl(RegExpCompiler* compiler,
       return node;
     }
     case Type::NON_BOUNDARY: {
+      if (v8_flags.utf8_string_semantics && compiler->one_byte() &&
+          IsIgnoreCase(compiler->flags())) {
+        RegExpNode* node = AssertionNode::Node8FoldedBoundary(false, on_success);
+        REGISTER_NODE(node);
+        return node;
+      }
       RegExpNode* node = NeedsUnicodeCaseEquivalents(compiler->flags())
                              ? BoundaryAssertionAsLookaround(
                                    compiler, on_success, Type::NON_BOUNDARY)
