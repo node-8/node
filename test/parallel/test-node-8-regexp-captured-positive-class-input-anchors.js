@@ -84,10 +84,10 @@ assertMatchIndices(
 assert.deepStrictEqual(Array.from(assertMatchIndices(
   [[0, 10], [4, 9], [6, 9]], regexp('^', mixedExact, '$', 'dmu'),
   prefix + field + tail)), [prefix + field + tail, field, cjk]);
-assert.strictEqual(
-  new RegExp('^\\b' + prefix + mixedExact + tail + '$', 'du')
-    .exec(prefix + field + tail),
-  null);
+assert.deepStrictEqual(Array.from(assertMatchIndices(
+  [[0, 10], [4, 9], [6, 9]],
+  new RegExp('^\\b' + prefix + mixedExact + tail + '$', 'du'),
+  prefix + field + tail)), [prefix + field + tail, field, cjk]);
 assert.deepStrictEqual(Array.from(assertMatchIndices(
   [[0, 10], [4, 9], [6, 9]],
   new RegExp('^(?=' + prefix + ')' + prefix + mixedExact + tail + '$', 'du'),

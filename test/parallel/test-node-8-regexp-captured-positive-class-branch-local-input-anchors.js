@@ -86,9 +86,10 @@ assertMatchIndices(
 assert.deepStrictEqual(Array.from(assertMatchIndices(
   [[0, 10], [4, 9], [6, 9]], expression(mixedExact, '', 'dmu'), subject)),
                        [subject, field, cjk]);
-assert.strictEqual(
-  new RegExp('(?:^\\bkey=' + mixedExact + '!|none)', 'du').exec(subject),
-  null);
+assert.deepStrictEqual(Array.from(assertMatchIndices(
+  [[0, 10], [4, 9], [6, 9]],
+  new RegExp('(?:^\\bkey=' + mixedExact + '!|none)', 'du'), subject)),
+                       [subject, field, cjk]);
 assert.deepStrictEqual(Array.from(assertMatchIndices(
   [[0, 10], [4, 9], [6, 9]],
   new RegExp('(?:^(?=key=)key=' + mixedExact + '!|none)', 'du'), subject)),
