@@ -597,6 +597,7 @@ class AssertionNode : public SeqRegExpNode {
     AT_START,
     AT_BOUNDARY,
     AT_NON_BOUNDARY,
+    NODE8_BEFORE_NEWLINE,
     AFTER_NEWLINE
   };
   static AssertionNode* AtEnd(RegExpNode* on_success) {
@@ -613,6 +614,10 @@ class AssertionNode : public SeqRegExpNode {
   }
   static AssertionNode* AfterNewline(RegExpNode* on_success) {
     return on_success->zone()->New<AssertionNode>(AFTER_NEWLINE, on_success);
+  }
+  static AssertionNode* Node8BeforeNewline(RegExpNode* on_success) {
+    return on_success->zone()->New<AssertionNode>(NODE8_BEFORE_NEWLINE,
+                                               on_success);
   }
   AssertionNode* AsAssertionNode() override { return this; }
   void Accept(NodeVisitor* visitor) override;
