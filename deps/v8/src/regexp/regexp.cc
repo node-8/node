@@ -839,9 +839,10 @@ bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags, Zone* zon
   }
   if (tree->IsGroup()) {
     auto* group = tree->AsGroup();
-    // DotAll is already reflected in the parsed character ranges.
-    if ((group->flags() & ~RegExpFlag::kDotAll) !=
-        (flags & ~RegExpFlag::kDotAll)) {
+    // The parser already resolves dotAll ranges and multiline assertions.
+    const RegExpFlags parsed_flags =
+        RegExpFlag::kDotAll | RegExpFlag::kMultiline;
+    if ((group->flags() & ~parsed_flags) != (flags & ~parsed_flags)) {
       return false;
     }
     // The caller clears internal i/u/v after lowering. Retaining this wrapper
@@ -985,9 +986,10 @@ RegExpTree* GetNode8ComposedLiteralByteTree(RegExpTree* tree, RegExpFlags flags,
   }
   if (tree->IsGroup()) {
     auto* group = tree->AsGroup();
-    // DotAll is already reflected in the parsed character ranges.
-    if ((group->flags() & ~RegExpFlag::kDotAll) !=
-        (flags & ~RegExpFlag::kDotAll)) {
+    // The parser already resolves dotAll ranges and multiline assertions.
+    const RegExpFlags parsed_flags =
+        RegExpFlag::kDotAll | RegExpFlag::kMultiline;
+    if ((group->flags() & ~parsed_flags) != (flags & ~parsed_flags)) {
       return nullptr;
     }
     RegExpTree* lowered = GetNode8ComposedLiteralByteTree(
