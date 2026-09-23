@@ -12,6 +12,7 @@
 #include "simdutf.h"
 #include "sqlite3.h"
 #include "util-inl.h"
+#include "uv.h"
 
 namespace node {
 namespace webstorage {
@@ -296,9 +297,24 @@ Maybe<void> Storage::Open() {
     CHECK_ERROR_OR_THROW(env(), r, SQLITE_OK, Nothing<void>());
   }
 
-  r = sqlite3_exec(db,
-                    "COMMIT; PRAGMA journal_mode = WAL; PRAGMA optimize;",
-                    nullptr, nullptr, nullptr);
+  r = sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+  CHECK_ERROR_OR_THROW(env(), r, SQLITE_OK, Nothing<void>());
+
+  // Another initializer can take the write lock after COMMIT. WAL's read-to-
+  // write lock upgrade may return BUSY without invoking SQLite's busy handler.
+  // Retry the finalized statement, with one shared three-second deadline.
+  CHECK_ERROR_OR_THROW(
+      env(), sqlite3_busy_timeout(db, 0), SQLITE_OK, Nothing<void>());
+  const uint64_t deadline = uv_hrtime() + 3'000'000'000;
+  do {
+    r = sqlite3_exec(db, "PRAGMA journal_mode = WAL;", nullptr, nullptr, nullptr);
+    if (r != SQLITE_BUSY || uv_hrtime() >= deadline) break;
+    sqlite3_sleep(1);
+  } while (true);
+  CHECK_ERROR_OR_THROW(env(), r, SQLITE_OK, Nothing<void>());
+  CHECK_ERROR_OR_THROW(
+      env(), sqlite3_busy_timeout(db, 3000), SQLITE_OK, Nothing<void>());
+  r = sqlite3_exec(db, "PRAGMA optimize;", nullptr, nullptr, nullptr);
   CHECK_ERROR_OR_THROW(env(), r, SQLITE_OK, Nothing<void>());
   db_ = std::move(connection);
   return JustVoid();
