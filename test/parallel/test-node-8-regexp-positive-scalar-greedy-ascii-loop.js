@@ -108,14 +108,14 @@ assertMatchIndices(
   /(([A-C\u00e9-\u00eb]+))/du,
   'A' + eAcute + eCircumflex);
 
-// These selectors remain outside the node-8 rewrite.
-assert.strictEqual(
-  /([A-C\u00e9-\u00eb]+)123456789/du.exec(
-    eAcute + eCircumflex + '123456789'),
-  null);
-assert.strictEqual(
-  /([A-C\u00e9-\u00eb]+)xy/duy.exec(eAcute + eCircumflex + 'xy'),
-  null);
+// Generic composition also supports longer tails and sticky matching.
+assertMatchIndices(
+  [[0, 13], [0, 4]], /([A-C\u00e9-\u00eb]+)123456789/du,
+  eAcute + eCircumflex + '123456789');
+assertMatchIndices(
+  [[0, 6], [0, 4]], /([A-C\u00e9-\u00eb]+)xy/duy,
+  eAcute + eCircumflex + 'xy');
+// Ignore-case composition remains a separate migration.
 assert.strictEqual(
   /([a-c\u00e9-\u00eb]+)xy/dui.exec(eAcute + eCircumflex + 'xy'),
   null);

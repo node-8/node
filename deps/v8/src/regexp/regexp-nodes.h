@@ -513,6 +513,14 @@ class TextNode : public SeqRegExpNode {
 // only needs an ASCII exclusion range: every non-ASCII result matches.
 class Wtf8ScalarNode : public SeqRegExpNode {
  public:
+  // Forward-only candidate-search edge, accepting any scalar/maximal subpart.
+  Wtf8ScalarNode(RegExpNode* on_success, bool allow_byte_skip)
+      : SeqRegExpNode(on_success),
+        excluded_from_(0),
+        excluded_to_(0),
+        slow_node_(nullptr),
+        is_any_scalar_(true),
+        allow_byte_skip_(allow_byte_skip) {}
   Wtf8ScalarNode(base::uc32 excluded_from, base::uc32 excluded_to,
                  RegExpNode* on_success, bool use_range_dispatch)
       : SeqRegExpNode(on_success),
@@ -548,6 +556,8 @@ class Wtf8ScalarNode : public SeqRegExpNode {
   base::uc32 excluded_from() const { return excluded_from_; }
   base::uc32 excluded_to() const { return excluded_to_; }
   bool is_positive_class() const { return is_positive_class_; }
+  bool is_any_scalar() const { return is_any_scalar_; }
+  bool allow_byte_skip() const { return allow_byte_skip_; }
   ZoneList<CharacterRange>* positive_ascii_ranges() const {
     return positive_ascii_ranges_;
   }
@@ -574,6 +584,8 @@ class Wtf8ScalarNode : public SeqRegExpNode {
   bool is_slow_node_ = false;
   bool use_range_dispatch_ = false;
   bool is_positive_class_ = false;
+  bool is_any_scalar_ = false;
+  bool allow_byte_skip_ = false;
 
   friend Zone;
 };

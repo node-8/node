@@ -70,5 +70,5 @@ assert.deepStrictEqual(malformed.indices[0], [0, 2]);
 assert.deepStrictEqual(malformed.indices.groups.part, [0, 2]);
 
 const empty = Array.from(cjk.matchAll(/([^\n]*?)/gu));
-assert.deepStrictEqual(empty.map((match) => match.index), [0, 1, 2, 3]);
-assert.deepStrictEqual(empty.map((match) => match[1]), ['', '', '', '']);
+assert.deepStrictEqual(empty.map((match) => match.index), [0, 3]);
+assert.deepStrictEqual(empty.map((match) => match[1]), ['', '']);

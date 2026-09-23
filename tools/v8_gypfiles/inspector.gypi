@@ -57,8 +57,8 @@
       '<(V8_ROOT)/src/inspector/remote-object-id.h',
       '<(V8_ROOT)/src/inspector/search-util.cc',
       '<(V8_ROOT)/src/inspector/search-util.h',
-      '<(V8_ROOT)/src/inspector/string-16.cc',
-      '<(V8_ROOT)/src/inspector/string-16.h',
+      '<(V8_ROOT)/src/inspector/string-8.cc',
+      '<(V8_ROOT)/src/inspector/string-8.h',
       '<(V8_ROOT)/src/inspector/string-util.cc',
       '<(V8_ROOT)/src/inspector/string-util.h',
       '<(V8_ROOT)/src/inspector/test-interface.cc',
@@ -102,9 +102,6 @@
       '<(V8_ROOT)/src/inspector/v8-value-utils.h',
       '<(V8_ROOT)/src/inspector/value-mirror.cc',
       '<(V8_ROOT)/src/inspector/value-mirror.h',
-      # Flat merge `third_party/inspector_protocol:inspector_string_conversions`
-      '<(inspector_path)/v8-string-conversions.cc',
-      '<(inspector_path)/v8-string-conversions.h',
       # Flat merge `third_party/inspector_protocol:crdtp_platform`
       '<(inspector_protocol_path)/crdtp/json_platform.h',
       '<(inspector_protocol_path)/crdtp/json_platform_v8.cc',

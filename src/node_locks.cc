@@ -27,6 +27,7 @@ using v8::Object;
 using v8::ObjectTemplate;
 using v8::Promise;
 using v8::PropertyAttribute;
+using v8::String;
 using v8::Value;
 
 // Reject two promises and return `false` on failure.
@@ -39,18 +40,21 @@ static bool RejectBoth(Local<Context> ctx,
 }
 
 Lock::Lock(Environment* env,
-           const std::u16string& name,
+           const std::string& name,
+           Local<String> name_string,
            Mode mode,
            const std::string& client_id,
            Local<Promise::Resolver> waiting,
            Local<Promise::Resolver> released)
     : env_(env), name_(name), mode_(mode), client_id_(client_id) {
+  name_string_.Reset(env_->isolate(), name_string);
   waiting_promise_.Reset(env_->isolate(), waiting);
   released_promise_.Reset(env_->isolate(), released);
 }
 
 void Lock::MemoryInfo(node::MemoryTracker* tracker) const {
   tracker->TrackFieldWithSize("name", name_.size());
+  tracker->TrackField("name_string", name_string_);
   tracker->TrackField("client_id", client_id_);
   tracker->TrackField("waiting_promise", waiting_promise_);
   tracker->TrackField("released_promise", released_promise_);
@@ -60,7 +64,8 @@ LockRequest::LockRequest(Environment* env,
                          Local<Promise::Resolver> waiting,
                          Local<Promise::Resolver> released,
                          Local<Function> callback,
-                         const std::u16string& name,
+                         const std::string& name,
+                         Local<String> name_string,
                          Lock::Mode mode,
                          std::string client_id,
                          bool steal,
@@ -71,6 +76,7 @@ LockRequest::LockRequest(Environment* env,
       client_id_(std::move(client_id)),
       steal_(steal),
       if_available_(if_available) {
+  name_string_.Reset(env_->isolate(), name_string);
   waiting_promise_.Reset(env_->isolate(), waiting);
   released_promise_.Reset(env_->isolate(), released);
   callback_.Reset(env_->isolate(), callback);
@@ -93,9 +99,10 @@ Local<DictionaryTemplate> GetLockInfoTemplate(Environment* env) {
 // The request here can be either a Lock or a LockRequest.
 static MaybeLocal<Object> CreateLockInfoObject(Environment* env,
                                                const auto& request) {
+  DCHECK_EQ(env, request.env());
   auto tmpl = GetLockInfoTemplate(env);
   MaybeLocal<Value> values[] = {
-      ToV8Value(env->context(), request.name()),
+      request.name_string(),
       request.mode() == Lock::Mode::Exclusive ? env->exclusive_string()
                                               : env->shared_string(),
       ToV8Value(env->context(), request.client_id()),
@@ -164,7 +171,7 @@ static void OnIfAvailableReject(const FunctionCallbackInfo<Value>& info) {
 }
 
 void LockManager::CleanupStolenLocks(Environment* env) {
-  std::vector<std::u16string> resources_to_clean;
+  std::vector<std::string> resources_to_clean;
 
   // Iterate held locks and remove entries that were stolen from other envs.
   {
@@ -247,7 +254,7 @@ void LockManager::ProcessQueue(Environment* env) {
      */
 
     {
-      std::unordered_map<std::u16string, LockRequest*> first_seen_for_resource;
+      std::unordered_map<std::string, LockRequest*> first_seen_for_resource;
 
       Mutex::ScopedLock scoped_lock(mutex_);
       for (auto queue_iter = pending_queue_.begin();
@@ -450,6 +457,7 @@ void LockManager::ProcessQueue(Environment* env) {
     auto granted_lock =
         std::make_shared<Lock>(env,
                                grantable_request->name(),
+                               grantable_request->name_string(),
                                grantable_request->mode(),
                                grantable_request->client_id(),
                                grantable_request->waiting_promise(),
@@ -579,7 +587,11 @@ void LockManager::Request(const FunctionCallbackInfo<Value>& args) {
   CHECK(args[4]->IsBoolean());   // ifAvailable
   CHECK(args[5]->IsFunction());  // callback
 
-  TwoByteValue resource_name(isolate, args[0]);
+  Local<String> name_string = args[0].As<String>();
+  std::string resource_name(name_string->Utf8LengthV2(isolate), '\0');
+  // Default flags preserve stock lone surrogates and node-8 raw bytes.
+  name_string->WriteUtf8V2(
+      isolate, resource_name.data(), resource_name.size());
   Utf8Value client_id(isolate, args[1]);
   Utf8Value mode(isolate, args[2]);
   bool steal = args[3]->BooleanValue(isolate);
@@ -613,7 +625,8 @@ void LockManager::Request(const FunctionCallbackInfo<Value>& args) {
         waiting_promise,
         released_promise,
         callback,
-        resource_name.ToU16String(),
+        resource_name,
+        name_string,
         mode.ToStringView() == "shared" ? Lock::Mode::Shared
                                         : Lock::Mode::Exclusive,
         client_id.ToString(),
@@ -734,7 +747,7 @@ void LockManager::ReleaseLockAndProcessQueue(Environment* env,
 
 // Remove a lock from held_locks_ when it's no longer needed
 void LockManager::ReleaseLock(Lock* lock) {
-  const std::u16string& resource_name = lock->name();
+  const std::string& resource_name = lock->name();
   auto resource_iter = held_locks_.find(resource_name);
   if (resource_iter == held_locks_.end()) return;
 

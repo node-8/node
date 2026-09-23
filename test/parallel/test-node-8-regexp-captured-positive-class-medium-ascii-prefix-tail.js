@@ -24,15 +24,19 @@ function assertMatchIndices(expected, regexp, subject) {
   return match;
 }
 
-// Pure-outer medium atoms retain the old selector behavior.
-assert.strictEqual(
-  /(([A-C\u00e9-\u00eb]+))123456789/du.exec(
-    eAcute + eCircumflex + tail9),
-  null);
-assert.strictEqual(
-  /prefix-123456789(([A-C\u00e9-\u00eb]{1,3}?))1234567890abcdef/du
-    .exec(prefix16 + eAcute + eCircumflex + tail16),
-  null);
+// Pure-outer captures both retain the complete field, with byte indices.
+const pureOuter = assertMatchIndices(
+  [[0, 13], [0, 4], [0, 4]],
+  /(([A-C\u00e9-\u00eb]+))123456789/du,
+  eAcute + eCircumflex + tail9);
+assert.deepStrictEqual(
+  pureOuter.slice(1), [eAcute + eCircumflex, eAcute + eCircumflex]);
+const pureOuterLazy = assertMatchIndices(
+  [[0, 36], [16, 20], [16, 20]],
+  /prefix-123456789(([A-C\u00e9-\u00eb]{1,3}?))1234567890abcdef/du,
+  prefix16 + eAcute + eCircumflex + tail16);
+assert.deepStrictEqual(
+  pureOuterLazy.slice(1), [eAcute + eCircumflex, eAcute + eCircumflex]);
 
 // Body-only captures keep the final scalar. Mixed captures also keep the
 // complete field in the outer capture.
@@ -132,13 +136,12 @@ assertMatchIndices(
   [[0, 13], [0, 4], [2, 4]],
   /(([A-C\u00e9-\u00eb]){1,9})123456789/du,
   eAcute + eCircumflex + tail9);
-assert.strictEqual(
-  /(([A-C\u00e9-\u00eb])+)\u4e2d/du.exec(eAcute + eCircumflex + cjk),
-  null);
-assert.strictEqual(
-  /(([A-C\u00e9-\u00eb])+)123456789/duy.exec(
-    eAcute + eCircumflex + tail9),
-  null);
+assertMatchIndices(
+  [[0, 7], [0, 4], [2, 4]], /(([A-C\u00e9-\u00eb])+)\u4e2d/du,
+  eAcute + eCircumflex + cjk);
+assertMatchIndices(
+  [[0, 13], [0, 4], [2, 4]], /(([A-C\u00e9-\u00eb])+)123456789/duy,
+  eAcute + eCircumflex + tail9);
 assert.strictEqual(
   /(([a-c\u00e9-\u00eb])+)123456789/dui.exec(
     eAcute + eCircumflex + tail9),

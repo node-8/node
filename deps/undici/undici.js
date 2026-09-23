@@ -4697,6 +4697,7 @@ var require_webidl = __commonJS({
     var assert = require("node:assert");
     var { types, inspect } = require("node:util");
     var { markAsUncloneable } = require("node:worker_threads");
+    var getNode8OptionValue = typeof internalBinding === "function" ? require("node:internal/options").getOptionValue : void 0;
     var UNDEFINED = 1;
     var BOOLEAN = 2;
     var STRING = 3;
@@ -5080,8 +5081,22 @@ var require_webidl = __commonJS({
         });
       }
       const x = String(V);
+      let node8;
       for (let index = 0; index < x.length; index++) {
-        if (x.charCodeAt(index) > 255) {
+        const code = x.charCodeAt(index);
+        if (code < 128) continue;
+        node8 ??= getNode8OptionValue?.("--experimental-node-8-string-semantics") === true;
+        if (node8) {
+          const next = x.charCodeAt(index + 1);
+          if ((code === 194 || code === 195) && next >= 128 && next <= 191) {
+            index++;
+            continue;
+          }
+          throw new TypeError(
+            `Cannot convert argument to a ByteString because the byte sequence at index ${index} does not encode a Latin-1 character.`
+          );
+        }
+        if (code > 255) {
           throw new TypeError(
             `Cannot convert argument to a ByteString because the character at index ${index} has a value of ${x.charCodeAt(index)} which is greater than 255.`
           );

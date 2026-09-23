@@ -85,6 +85,59 @@ static void ThrowQuotaExceededException(Local<Context> context) {
   isolate->ThrowException(exception);
 }
 
+// Own an aligned SQL binding buffer without interpreting node-8 bytes.
+class StorageString : public MaybeStackBuffer<uint16_t> {
+ public:
+  StorageString(Environment* env, Local<String> value) {
+    const size_t length = value->Length();
+    if (env->experimental_node_8_string_semantics()) {
+      byte_length_ = length;
+      AllocateSufficientStorage((length + 1) / 2);
+      value->WriteOneByteV2(
+          env->isolate(), 0, length, reinterpret_cast<uint8_t*>(out()));
+    } else {
+      byte_length_ = length * sizeof(uint16_t);
+      AllocateSufficientStorage(length);
+      value->WriteV2(env->isolate(), 0, length, out());
+    }
+  }
+
+  size_t byte_length() const { return byte_length_; }
+
+ private:
+  size_t byte_length_;
+};
+
+static MaybeLocal<String> ReadStorageColumn(Environment* env,
+                                             sqlite3_stmt* stmt,
+                                             int column) {
+  const auto* data = sqlite3_column_blob(stmt, column);
+  const size_t length = sqlite3_column_bytes(stmt, column);
+  if (env->experimental_node_8_string_semantics()) {
+    return String::NewFromBytes(env->isolate(),
+                                static_cast<const uint8_t*>(data),
+                                NewStringType::kNormal,
+                                length);
+  }
+  return String::NewFromTwoByte(env->isolate(),
+                                static_cast<const uint16_t*>(data),
+                                NewStringType::kNormal,
+                                length / sizeof(uint16_t));
+}
+
+static std::u16string ReadInspectorColumn(Environment* env,
+                                          sqlite3_stmt* stmt,
+                                          int column) {
+  const size_t length = sqlite3_column_bytes(stmt, column);
+  if (length == 0) return {};
+  const auto* data = sqlite3_column_blob(stmt, column);
+  if (env->experimental_node_8_string_semantics()) {
+    const auto* bytes = static_cast<const uint8_t*>(data);
+    return {bytes, bytes + length};
+  }
+  return {static_cast<const char16_t*>(data), length / sizeof(uint16_t)};
+}
+
 Storage::Storage(Environment* env,
                  Local<Object> object,
                  std::string_view location)
@@ -105,16 +158,10 @@ void Storage::MemoryInfo(MemoryTracker* tracker) const {
 }
 
 Maybe<void> Storage::Open() {
-  static const int kCurrentSchemaVersion = 1;
   static constexpr std::string_view get_schema_version_sql =
       "SELECT schema_version FROM nodejs_webstorage_state";
   static constexpr std::string_view init_sql_v0 =
       "PRAGMA encoding = 'UTF-16le';"
-      "PRAGMA busy_timeout = 3000;"
-      "PRAGMA journal_mode = WAL;"
-      "PRAGMA synchronous = NORMAL;"
-      "PRAGMA temp_store = memory;"
-      "PRAGMA optimize;"
       ""
       "CREATE TABLE IF NOT EXISTS nodejs_webstorage("
       "  key BLOB NOT NULL,"
@@ -172,44 +219,88 @@ Maybe<void> Storage::Open() {
     return JustVoid();
   }
 
+  const bool byte_format = env()->experimental_node_8_string_semantics();
+  const int current_schema_version = byte_format ? 2 : 1;
   int r = sqlite3_open(location_.c_str(), &db);
+  conn_unique_ptr connection(db);
   CHECK_ERROR_OR_THROW(env(), r, SQLITE_OK, Nothing<void>());
-  r = sqlite3_exec(db, init_sql_v0.data(), nullptr, nullptr, nullptr);
+  r = sqlite3_exec(db,
+                    "PRAGMA busy_timeout = 3000;"
+                    "PRAGMA synchronous = NORMAL;"
+                    "PRAGMA temp_store = memory;"
+                    "BEGIN IMMEDIATE;",
+                    nullptr, nullptr, nullptr);
   CHECK_ERROR_OR_THROW(env(), r, SQLITE_OK, Nothing<void>());
 
-  // Get the current schema version, used to determine schema migrations.
+  // Check before any schema writes, and serialize competing initializers.
   sqlite3_stmt* s = nullptr;
-  r = sqlite3_prepare_v2(db,
-                         get_schema_version_sql.data(),
-                         get_schema_version_sql.size(),
-                         &s,
-                         nullptr);
-  r = sqlite3_exec(db, init_sql_v0.data(), nullptr, nullptr, nullptr);
-  CHECK_ERROR_OR_THROW(env(), r, SQLITE_OK, Nothing<void>());
+  static constexpr std::string_view tables_sql =
+      "SELECT count(*), "
+      "sum(name = 'nodejs_webstorage_state'), "
+      "sum(name = 'nodejs_webstorage') "
+      "FROM sqlite_schema WHERE type = 'table'";
+  r = sqlite3_prepare_v2(
+      db, tables_sql.data(), tables_sql.size(), &s, nullptr);
   auto stmt = stmt_unique_ptr(s);
+  CHECK_ERROR_OR_THROW(env(), r, SQLITE_OK, Nothing<void>());
   CHECK_ERROR_OR_THROW(
       env(), sqlite3_step(stmt.get()), SQLITE_ROW, Nothing<void>());
-  CHECK(sqlite3_column_type(stmt.get(), 0) == SQLITE_INTEGER);
-  int schema_version = sqlite3_column_int(stmt.get(), 0);
-  stmt = nullptr;  // Force finalization.
+  const bool has_tables = sqlite3_column_int(stmt.get(), 0) != 0;
+  const bool has_state = sqlite3_column_int(stmt.get(), 1) != 0;
+  const bool has_storage = sqlite3_column_int(stmt.get(), 2) != 0;
+  stmt.reset();
+  int64_t schema_version = 0;
+  if (has_state) {
+    r = sqlite3_prepare_v2(db,
+                           get_schema_version_sql.data(),
+                           get_schema_version_sql.size(),
+                           &s,
+                           nullptr);
+    stmt.reset(s);
+    CHECK_ERROR_OR_THROW(env(), r, SQLITE_OK, Nothing<void>());
+    CHECK_ERROR_OR_THROW(
+        env(), sqlite3_step(stmt.get()), SQLITE_ROW, Nothing<void>());
+    if (sqlite3_column_type(stmt.get(), 0) != SQLITE_INTEGER) {
+      THROW_ERR_INVALID_STATE(env(), "localStorage has an invalid schema version");
+      return Nothing<void>();
+    }
+    schema_version = sqlite3_column_int64(stmt.get(), 0);
+    CHECK_ERROR_OR_THROW(
+        env(), sqlite3_step(stmt.get()), SQLITE_DONE, Nothing<void>());
+    stmt.reset();
+  }
 
-  if (schema_version > kCurrentSchemaVersion) {
+  if (byte_format && has_tables &&
+      (!has_state || !has_storage ||
+       schema_version != current_schema_version)) {
+    THROW_ERR_INVALID_STATE(
+        env(), "localStorage has an incompatible string format; "
+               "use a separate file for node-8 (no automatic migration)");
+    return Nothing<void>();
+  }
+  if (schema_version > current_schema_version) {
     THROW_ERR_INVALID_STATE(
         env(), "localStorage was created with a newer version of Node.js");
     return Nothing<void>();
   }
 
-  if (schema_version < kCurrentSchemaVersion) {
+  r = sqlite3_exec(db, init_sql_v0.data(), nullptr, nullptr, nullptr);
+  CHECK_ERROR_OR_THROW(env(), r, SQLITE_OK, Nothing<void>());
+  if (schema_version < current_schema_version) {
     // Run any migrations and update the schema version.
     std::string set_user_version_sql =
         "UPDATE nodejs_webstorage_state SET schema_version = " +
-        std::to_string(kCurrentSchemaVersion) + ";";
+        std::to_string(current_schema_version) + ";";
     r = sqlite3_exec(
         db, set_user_version_sql.c_str(), nullptr, nullptr, nullptr);
     CHECK_ERROR_OR_THROW(env(), r, SQLITE_OK, Nothing<void>());
   }
 
-  db_ = conn_unique_ptr(db);
+  r = sqlite3_exec(db,
+                    "COMMIT; PRAGMA journal_mode = WAL; PRAGMA optimize;",
+                    nullptr, nullptr, nullptr);
+  CHECK_ERROR_OR_THROW(env(), r, SQLITE_OK, Nothing<void>());
+  db_ = std::move(connection);
   return JustVoid();
 }
 
@@ -267,13 +358,7 @@ MaybeLocal<Array> Storage::Enumerate() {
   Local<Value> value;
   while ((r = sqlite3_step(stmt.get())) == SQLITE_ROW) {
     CHECK(sqlite3_column_type(stmt.get(), 0) == SQLITE_BLOB);
-    auto size = sqlite3_column_bytes(stmt.get(), 0) / sizeof(uint16_t);
-    if (!String::NewFromTwoByte(env()->isolate(),
-                                reinterpret_cast<const uint16_t*>(
-                                    sqlite3_column_blob(stmt.get(), 0)),
-                                NewStringType::kNormal,
-                                size)
-             .ToLocal(&value)) {
+    if (!ReadStorageColumn(env(), stmt.get(), 0).ToLocal(&value)) {
       return Local<Array>();
     }
     values.emplace_back(value);
@@ -296,17 +381,8 @@ std::unordered_map<std::u16string, std::u16string> Storage::GetAll() {
   while ((r = sqlite3_step(stmt.get())) == SQLITE_ROW) {
     CHECK(sqlite3_column_type(stmt.get(), 0) == SQLITE_BLOB);
     CHECK(sqlite3_column_type(stmt.get(), 1) == SQLITE_BLOB);
-    auto key_size = sqlite3_column_bytes(stmt.get(), 0) / sizeof(uint16_t);
-    auto value_size = sqlite3_column_bytes(stmt.get(), 1) / sizeof(uint16_t);
-    auto key_uint16(
-        reinterpret_cast<const char16_t*>(sqlite3_column_blob(stmt.get(), 0)));
-    auto value_uint16(
-        reinterpret_cast<const char16_t*>(sqlite3_column_blob(stmt.get(), 1)));
-
-    std::u16string key(key_uint16, key_size);
-    std::u16string value(value_uint16, value_size);
-
-    result.emplace(std::move(key), std::move(value));
+    result.emplace(ReadInspectorColumn(env(), stmt.get(), 0),
+                   ReadInspectorColumn(env(), stmt.get(), 1));
   }
   return result;
 }
@@ -341,24 +417,18 @@ MaybeLocal<Value> Storage::Load(Local<Name> key) {
 
   static constexpr std::string_view sql =
       "SELECT value FROM nodejs_webstorage WHERE key = ? LIMIT 1";
+  StorageString stored_key(env(), key.As<String>());
   sqlite3_stmt* s = nullptr;
   int r = sqlite3_prepare_v2(db_.get(), sql.data(), sql.size(), &s, nullptr);
   CHECK_ERROR_OR_THROW(env(), r, SQLITE_OK, Local<Value>());
   auto stmt = stmt_unique_ptr(s);
-  TwoByteValue utf16key(env()->isolate(), key);
-  auto key_size = utf16key.length() * sizeof(uint16_t);
-  r = sqlite3_bind_blob(stmt.get(), 1, utf16key.out(), key_size, SQLITE_STATIC);
+  r = sqlite3_bind_blob(stmt.get(), 1, stored_key.out(),
+                         stored_key.byte_length(), SQLITE_STATIC);
   CHECK_ERROR_OR_THROW(env(), r, SQLITE_OK, Local<Value>());
   r = sqlite3_step(stmt.get());
   if (r == SQLITE_ROW) {
     CHECK(sqlite3_column_type(stmt.get(), 0) == SQLITE_BLOB);
-    auto size = sqlite3_column_bytes(stmt.get(), 0) / sizeof(uint16_t);
-    return String::NewFromTwoByte(env()->isolate(),
-                                  reinterpret_cast<const uint16_t*>(
-                                      sqlite3_column_blob(stmt.get(), 0)),
-                                  NewStringType::kNormal,
-                                  size)
-        .As<Value>();
+    return ReadStorageColumn(env(), stmt.get(), 0).As<Value>();
   } else if (r != SQLITE_DONE) {
     THROW_SQLITE_ERROR(env(), r);
     return {};
@@ -384,13 +454,7 @@ MaybeLocal<Value> Storage::LoadKey(const int index) {
   r = sqlite3_step(stmt.get());
   if (r == SQLITE_ROW) {
     CHECK(sqlite3_column_type(stmt.get(), 0) == SQLITE_BLOB);
-    auto size = sqlite3_column_bytes(stmt.get(), 0) / sizeof(uint16_t);
-    return String::NewFromTwoByte(env()->isolate(),
-                                  reinterpret_cast<const uint16_t*>(
-                                      sqlite3_column_blob(stmt.get(), 0)),
-                                  NewStringType::kNormal,
-                                  size)
-        .As<Value>();
+    return ReadStorageColumn(env(), stmt.get(), 0).As<Value>();
   } else if (r != SQLITE_DONE) {
     THROW_SQLITE_ERROR(env(), r);
     return {};
@@ -412,13 +476,13 @@ Maybe<void> Storage::Remove(Local<Name> key) {
 
   static constexpr std::string_view sql =
       "DELETE FROM nodejs_webstorage WHERE key = ?";
+  StorageString stored_key(env(), key.As<String>());
   sqlite3_stmt* s = nullptr;
   int r = sqlite3_prepare_v2(db_.get(), sql.data(), sql.size(), &s, nullptr);
   CHECK_ERROR_OR_THROW(env(), r, SQLITE_OK, Nothing<void>());
   auto stmt = stmt_unique_ptr(s);
-  TwoByteValue utf16key(env()->isolate(), key);
-  auto key_size = utf16key.length() * sizeof(uint16_t);
-  r = sqlite3_bind_blob(stmt.get(), 1, utf16key.out(), key_size, SQLITE_STATIC);
+  r = sqlite3_bind_blob(stmt.get(), 1, stored_key.out(),
+                         stored_key.byte_length(), SQLITE_STATIC);
   CHECK_ERROR_OR_THROW(env(), r, SQLITE_OK, Nothing<void>());
   CHECK_ERROR_OR_THROW(
       env(), sqlite3_step(stmt.get()), SQLITE_DONE, Nothing<void>());
@@ -446,16 +510,16 @@ Maybe<void> Storage::Store(Local<Name> key, Local<Value> value) {
       "  ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"
       "  WHERE EXCLUDED.key = key";
   sqlite3_stmt* s = nullptr;
-  TwoByteValue utf16key(env()->isolate(), key);
-  TwoByteValue utf16val(env()->isolate(), val);
+  StorageString stored_key(env(), key.As<String>());
+  StorageString stored_value(env(), val);
   int r = sqlite3_prepare_v2(db_.get(), sql.data(), sql.size(), &s, nullptr);
   CHECK_ERROR_OR_THROW(env(), r, SQLITE_OK, Nothing<void>());
   auto stmt = stmt_unique_ptr(s);
-  auto key_size = utf16key.length() * sizeof(uint16_t);
-  r = sqlite3_bind_blob(stmt.get(), 1, utf16key.out(), key_size, SQLITE_STATIC);
+  r = sqlite3_bind_blob(stmt.get(), 1, stored_key.out(),
+                         stored_key.byte_length(), SQLITE_STATIC);
   CHECK_ERROR_OR_THROW(env(), r, SQLITE_OK, Nothing<void>());
-  auto val_size = utf16val.length() * sizeof(uint16_t);
-  r = sqlite3_bind_blob(stmt.get(), 2, utf16val.out(), val_size, SQLITE_STATIC);
+  r = sqlite3_bind_blob(stmt.get(), 2, stored_value.out(),
+                         stored_value.byte_length(), SQLITE_STATIC);
   CHECK_ERROR_OR_THROW(env(), r, SQLITE_OK, Nothing<void>());
 
   r = sqlite3_step(stmt.get());

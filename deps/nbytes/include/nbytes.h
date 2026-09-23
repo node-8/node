@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <type_traits>
 
 namespace nbytes {
 
@@ -256,7 +257,7 @@ class Vector {
   }
 
   // Returns the start of the memory range.
-  // For vector v this is NOT necessarily &v[0], see forward().
+  // The first logical element is not necessarily here, see forward().
   const T *start() const { return start_; }
 
   // Returns the length of the vector, in characters.
@@ -267,9 +268,14 @@ class Vector {
   bool forward() const { return is_forward_; }
 
   // Access individual vector elements - checks bounds in debug mode.
-  T &operator[](size_t index) const {
+  std::remove_cv_t<T> operator[](size_t index) const {
     NBYTES_ASSERT_TRUE(index < length_);
-    return start_[is_forward_ ? index : (length_ - index - 1)];
+    const size_t offset = is_forward_ ? index : (length_ - index - 1);
+    std::remove_cv_t<T> value;
+    // Buffer views may start at an unaligned address.
+    memcpy(&value, reinterpret_cast<const uint8_t *>(start_) + offset * sizeof(T),
+           sizeof(value));
+    return value;
   }
 
  private:
@@ -441,6 +447,7 @@ inline size_t FindFirstCharacter(Vector<const Char> pattern,
   // For speed, search for the more `rare` of the two bytes in pattern[0]
   // using memchr / memrchr (which are much faster than a simple for loop).
   const uint8_t search_byte = GetHighestValueByte(pattern_first_char);
+  const auto *subject_bytes = reinterpret_cast<const uint8_t *>(subject.start());
   size_t pos = index;
   do {
     const size_t bytes_to_search = (max_n - pos) * sizeof(Char);
@@ -449,19 +456,20 @@ inline size_t FindFirstCharacter(Vector<const Char> pattern,
       // Assert that bytes_to_search won't overflow
       NBYTES_ASSERT_TRUE(pos <= max_n);
       NBYTES_ASSERT_TRUE(max_n - pos <= SIZE_MAX / sizeof(Char));
-      void_pos = memchr(subject.start() + pos, search_byte, bytes_to_search);
+      void_pos = memchr(subject_bytes + pos * sizeof(Char), search_byte,
+                       bytes_to_search);
     } else {
       NBYTES_ASSERT_TRUE(pos <= subject.length());
       NBYTES_ASSERT_TRUE(subject.length() - pos <= SIZE_MAX / sizeof(Char));
-      void_pos = MemrchrFill(subject.start() + pattern.length() - 1,
-                             search_byte, bytes_to_search);
+      void_pos = MemrchrFill(subject_bytes + (pattern.length() - 1) * sizeof(Char),
+                            search_byte, bytes_to_search);
     }
-    const Char *char_pos = static_cast<const Char *>(void_pos);
-    if (char_pos == nullptr) return subject.length();
+    if (void_pos == nullptr) return subject.length();
 
     // Then, for each match, verify that the full two bytes match pattern[0].
-    char_pos = AlignDown(char_pos, sizeof(Char));
-    size_t raw_pos = static_cast<size_t>(char_pos - subject.start());
+    // Code units are aligned relative to the view, not to absolute addresses.
+    size_t raw_pos = (static_cast<const uint8_t *>(void_pos) - subject_bytes) /
+                    sizeof(Char);
     pos = subject.forward() ? raw_pos : (subject.length() - raw_pos - 1);
     if (subject[pos] == pattern_first_char) {
       // Match found, hooray.

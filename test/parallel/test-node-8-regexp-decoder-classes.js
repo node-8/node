@@ -100,10 +100,9 @@ assert.strictEqual(
 
 const continuationStarMatches = Array.from(eAcute.matchAll(/[\uFFFD]*/gu));
 assert.deepStrictEqual(
-  continuationStarMatches.map((match) => match.index), [0, 1, 2]);
+  continuationStarMatches.map((match) => match.index), [0, 2]);
 assert.deepStrictEqual(
-  continuationStarMatches.map((match) => match[0].length), [0, 1, 0]);
-assert.strictEqual(continuationStarMatches[1][0].charCodeAt(0), 0xa9);
+  continuationStarMatches.map((match) => match[0].length), [0, 0]);
 
 const asciiStarSubject = cjk + '\n' + cjk;
 const asciiStarMatches = Array.from(asciiStarSubject.matchAll(/[^\n]*/gu));
@@ -146,9 +145,9 @@ assert.deepStrictEqual(
 const positiveAsciiOptionalMatches = Array.from(
   (cjk + 'a').matchAll(/[a-z]?/gu));
 assert.deepStrictEqual(
-  positiveAsciiOptionalMatches.map((match) => match.index), [0, 1, 2, 3, 4]);
+  positiveAsciiOptionalMatches.map((match) => match.index), [0, 3, 4]);
 assert.deepStrictEqual(
-  positiveAsciiOptionalMatches.map((match) => match[0]), ['', '', '', 'a', '']);
+  positiveAsciiOptionalMatches.map((match) => match[0]), ['', 'a', '']);
 
 const stickyOptional = /[^é]?/uy;
 stickyOptional.lastIndex = 2;

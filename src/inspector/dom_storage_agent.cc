@@ -109,14 +109,17 @@ protocol::DispatchResponse DOMStorageAgent::getDOMStorageItems(
 
   auto result =
       std::make_unique<protocol::Array<protocol::Array<protocol::String>>>();
+  auto to_protocol_string = [&](const std::u16string& value) {
+    if (env_->experimental_node_8_string_semantics()) {
+      return protocol::String(value.begin(), value.end());
+    }
+    return protocol::StringUtil::fromUTF16(
+        reinterpret_cast<const uint16_t*>(value.data()), value.size());
+  };
   for (const auto& pair : *storage_map) {
     auto item = std::make_unique<protocol::Array<protocol::String>>();
-    item->push_back(protocol::StringUtil::fromUTF16(
-        reinterpret_cast<const uint16_t*>(pair.first.data()),
-        pair.first.size()));
-    item->push_back(protocol::StringUtil::fromUTF16(
-        reinterpret_cast<const uint16_t*>(pair.second.data()),
-        pair.second.size()));
+    item->push_back(to_protocol_string(pair.first));
+    item->push_back(to_protocol_string(pair.second));
     result->push_back(std::move(item));
   }
   *items = std::move(result);

@@ -2505,6 +2505,21 @@ EmitResult TextNode::Emit(RegExpCompiler* compiler, Trace* trace) {
 
 EmitResult Wtf8ScalarNode::Emit(RegExpCompiler* compiler, Trace* trace) {
   TRACE_EMIT("Wtf8Scalar");
+  if (is_any_scalar_) {
+    if (!trace->is_trivial()) return trace->Flush(compiler, this);
+    LimitResult limit_result = LimitVersions(compiler, trace);
+    if (limit_result == DONE) return EmitResult::Success();
+    DCHECK_EQ(limit_result, CONTINUE);
+
+    RegExpMacroAssembler* assembler = compiler->macro_assembler();
+    // The shared emitter's first load is unchecked. End is tried by the body,
+    // but must never be consumed by the failed-candidate advance edge.
+    assembler->CheckPosition(0, trace->backtrack());
+    assembler->AdvanceUtf8Position();
+    Trace successor_trace;
+    RecursionCheck rc(compiler);
+    return on_success()->Emit(compiler, &successor_trace);
+  }
   if (is_positive_class_) {
     LimitResult limit_result = LimitVersions(compiler, trace);
     if (limit_result == DONE) return EmitResult::Success();
@@ -2515,16 +2530,66 @@ EmitResult Wtf8ScalarNode::Emit(RegExpCompiler* compiler, Trace* trace) {
     Label non_ascii;
     assembler->LoadCurrentCharacter(trace->cp_offset(), trace->backtrack(),
                                     true);
-    for (CharacterRange range : *positive_ascii_ranges_) {
-      if (range.from() == range.to()) {
-        assembler->CheckCharacter(range.from(), &ascii_match);
-      } else {
-        assembler->CheckCharacterInRange(range.from(), range.to(),
-                                         &ascii_match);
+    const int range_count = positive_ascii_ranges_->length();
+    const bool full_ascii =
+        range_count == 1 && positive_ascii_ranges_->first().from() == 0 &&
+        positive_ascii_ranges_->first().to() == 0x7f;
+    int excluded_from = 0;
+    int excluded_to = -1;
+    if (range_count == 1 && !full_ascii) {
+      CharacterRange range = positive_ascii_ranges_->first();
+      if (range.from() == 0) {
+        excluded_from = range.to() + 1;
+        excluded_to = 0x7f;
+      } else if (range.to() == 0x7f) {
+        excluded_to = range.from() - 1;
       }
+    } else if (range_count == 2 &&
+               positive_ascii_ranges_->first().from() == 0 &&
+               positive_ascii_ranges_->last().to() == 0x7f) {
+      excluded_from = positive_ascii_ranges_->first().to() + 1;
+      excluded_to = positive_ascii_ranges_->last().from() - 1;
     }
-    assembler->CheckCharacterGT(0x7f, &non_ascii);
-    assembler->GoTo(trace->backtrack());
+    if (full_ascii || excluded_from <= excluded_to) {
+      // Preserve the single exclusion check for complements of an ASCII
+      // interval. Non-ASCII bytes must reach the variable-width edge.
+      if (excluded_from == excluded_to) {
+        assembler->CheckCharacter(excluded_from, trace->backtrack());
+      } else if (excluded_from < excluded_to) {
+        assembler->CheckCharacterInRange(excluded_from, excluded_to,
+                                         trace->backtrack());
+      }
+      assembler->CheckCharacterGT(0x7f, &non_ascii);
+    } else if (range_count > 16) {
+      // Build once while compiling. The high-byte check prevents the table's
+      // modulo-128 indexing from accepting a non-ASCII byte as an ASCII member.
+      static_assert(RegExpMacroAssembler::kTableSize == 0x80);
+      Handle<ByteArray> table = assembler->isolate()->factory()->NewByteArray(
+          RegExpMacroAssembler::kTableSize, AllocationType::kOld);
+      for (int byte = 0; byte < RegExpMacroAssembler::kTableSize; ++byte) {
+        table->set(byte, 0);
+      }
+      for (CharacterRange range : *positive_ascii_ranges_) {
+        DCHECK_LE(range.to(), 0x7f);
+        for (base::uc32 byte = range.from(); byte <= range.to(); ++byte) {
+          table->set(byte, 1);
+        }
+      }
+      assembler->CheckCharacterGT(0x7f, &non_ascii);
+      assembler->CheckBitInTable(table, &ascii_match);
+      assembler->GoTo(trace->backtrack());
+    } else {
+      for (CharacterRange range : *positive_ascii_ranges_) {
+        if (range.from() == range.to()) {
+          assembler->CheckCharacter(range.from(), &ascii_match);
+        } else {
+          assembler->CheckCharacterInRange(range.from(), range.to(),
+                                           &ascii_match);
+        }
+      }
+      assembler->CheckCharacterGT(0x7f, &non_ascii);
+      assembler->GoTo(trace->backtrack());
+    }
 
     assembler->Bind(&ascii_match);
     Trace successor_trace(*trace);
@@ -3449,7 +3514,17 @@ int ChoiceNode::EmitOptimizedUnanchoredSearch(
   }
   RegExpNode* eats_anything_node = alt1.node();
   if (eats_anything_node->GetSuccessorOfOmnivorousTextNode(compiler) != this) {
-    return eats_at_least;
+    // Lowering can remove a nullable branch, e.g. (?:(?=[])|ZZZZ)/v. Keep
+    // its byte-skip optimization when graph analysis proves every successful
+    // path consumes input. Complete consumers or a separately proved leading
+    // consumer reject interior continuations; the fallback still advances by
+    // the local decoder width.
+    auto* scalar = eats_anything_node->AsWtf8ScalarNode();
+    if (scalar == nullptr || !scalar->is_any_scalar() ||
+        !scalar->allow_byte_skip() || scalar->on_success() != this ||
+        EatsAtLeast(false) == 0) {
+      return eats_at_least;
+    }
   }
 
   // Really we should be creating a new trace when we execute this function,
@@ -4310,7 +4385,30 @@ RegExpNode* RegExpCompiler::PreprocessRegExp(RegExpCompileData* data,
   RegExpNode* captured_body =
       RegExpCapture::ToNode(data->tree, 0, this, accept());
   RegExpNode* node = captured_body;
-  if (!data->tree->IsAnchoredAtStart() && !IsSticky(flags())) {
+  if (!data->tree->IsAnchoredAtStart() && !IsSticky(flags()) &&
+      data->node8_scalar_search) {
+    // Keep the search prefix outside capture #0. Every failed candidate advances
+    // by a scalar, including the separate first step for expressions with '^'.
+    auto* loop = zone()->New<LoopChoiceNode>(false, false, zone());
+    auto* advance =
+        zone()->New<Wtf8ScalarNode>(loop, !data->node8_decoder_sensitive);
+    loop->AddContinueAlternative(GuardedAlternative(captured_body));
+    loop->AddLoopAlternative(GuardedAlternative(advance));
+    REGISTER_NODE(advance);
+    REGISTER_NODE(loop);
+    node = loop;
+    if (data->contains_anchor) {
+      loop->set_not_at_start();
+      auto* first_step = zone()->New<ChoiceNode>(2, zone());
+      auto* first_advance =
+          zone()->New<Wtf8ScalarNode>(loop, !data->node8_decoder_sensitive);
+      first_step->AddAlternative(GuardedAlternative(captured_body));
+      first_step->AddAlternative(GuardedAlternative(first_advance));
+      REGISTER_NODE(first_advance);
+      REGISTER_NODE(first_step);
+      node = first_step;
+    }
+  } else if (!data->tree->IsAnchoredAtStart() && !IsSticky(flags())) {
     // Add a .*? at the beginning, outside the body capture, unless
     // this expression is anchored at the beginning or sticky.
     TRACE_GRAPH("* Add .*? at beginning of unanchored, non-sticky RegExp");

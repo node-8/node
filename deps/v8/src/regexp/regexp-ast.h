@@ -316,6 +316,9 @@ class RegExpClassRanges final : public RegExpTree {
     NO_CASE_FOLDING_NEEDED = 1 << 2,
     IS_CERTAINLY_ONE_CODE_POINT = 1 << 3,
     IS_CERTAINLY_TWO_CODE_POINTS = 1 << 4,
+    // Compile-local ASCII dispatcher; its high-byte edge accepts one decoded
+    // scalar/maximal subpart. This is not String representation metadata.
+    NODE8_ACCEPTS_ALL_NON_ASCII = 1 << 5,
   };
   using ClassRangesFlags = base::Flags<Flag>;
 
@@ -337,6 +340,10 @@ class RegExpClassRanges final : public RegExpTree {
   // TODO(yangguo): we should split this class for usage in TextElement, and
   //                make max_match() dependent on the character class content.
   int max_match() override {
+    if (node8_accepts_all_non_ascii()) return 4;
+    if (node8_positive_non_ascii_tree_ != nullptr) {
+      return std::max(1, node8_positive_non_ascii_tree_->max_match());
+    }
     if (is_certainly_one_code_point()) {
       return 1;
     }
@@ -369,6 +376,9 @@ class RegExpClassRanges final : public RegExpTree {
   }
   bool is_certainly_two_code_points() const {
     return (class_ranges_flags_ & IS_CERTAINLY_TWO_CODE_POINTS) != 0;
+  }
+  bool node8_accepts_all_non_ascii() const {
+    return (class_ranges_flags_ & NODE8_ACCEPTS_ALL_NON_ASCII) != 0;
   }
   RegExpTree* node8_positive_non_ascii_tree() const {
     return node8_positive_non_ascii_tree_;

@@ -1,8 +1,16 @@
 'use strict'
 
+/* global internalBinding */
+
 const assert = require('node:assert')
 const { types, inspect } = require('node:util')
 const { markAsUncloneable } = require('node:worker_threads')
+
+// The builtin wrapper exposes private options; standalone stock Undici does
+// not. Keep the getter, not a snapshot-time copy of the runtime mode.
+const getNode8OptionValue = typeof internalBinding === 'function'
+  ? require('node:internal/options').getOptionValue
+  : undefined
 
 const UNDEFINED = 1
 const BOOLEAN = 2
@@ -633,8 +641,25 @@ webidl.converters.ByteString = function (V, prefix, argument) {
 
   // 2. If the value of any element of x is greater than
   //    255, then throw a TypeError.
+  let node8
   for (let index = 0; index < x.length; index++) {
-    if (x.charCodeAt(index) > 255) {
+    const code = x.charCodeAt(index)
+    if (code < 0x80) continue
+    node8 ??= getNode8OptionValue?.('--experimental-node-8-string-semantics') === true
+    if (node8) {
+      // U+0080..U+00FF has exactly this two-byte UTF-8 form. Do not
+      // reinterpret malformed raw bytes as Latin-1 or transcode the result.
+      const next = x.charCodeAt(index + 1)
+      if ((code === 0xc2 || code === 0xc3) && next >= 0x80 && next <= 0xbf) {
+        index++
+        continue
+      }
+      throw new TypeError(
+        'Cannot convert argument to a ByteString because the byte sequence at ' +
+        `index ${index} does not encode a Latin-1 character.`
+      )
+    }
+    if (code > 255) {
       throw new TypeError(
         'Cannot convert argument to a ByteString because the character at ' +
         `index ${index} has a value of ${x.charCodeAt(index)} which is greater than 255.`

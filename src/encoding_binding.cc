@@ -87,6 +87,27 @@ bool UseNode8StringSemantics(Isolate* isolate) {
   return env != nullptr && env->experimental_node_8_string_semantics();
 }
 
+void GetUtf8CharacterLength(const FunctionCallbackInfo<Value>& args) {
+  Isolate* isolate = args.GetIsolate();
+  args.GetReturnValue().Set(0);
+  if (!UseNode8StringSemantics(isolate) || args.Length() < 3 ||
+      !args[0]->IsString() || !args[1]->IsUint32() || !args[2]->IsUint32()) {
+    return;
+  }
+  Local<String> source = args[0].As<String>();
+  const uint32_t offset = args[1].As<v8::Uint32>()->Value();
+  const uint32_t limit = args[2].As<v8::Uint32>()->Value();
+  const uint32_t length = source->Length();
+  if (!source->IsOneByte() || offset >= length || limit == 0) return;
+
+  // Read only the local window, including from ropes, without flattening.
+  uint8_t bytes[4];
+  const uint32_t count = std::min({4u, limit, length - offset});
+  source->WriteOneByteV2(isolate, offset, count, bytes);
+  args.GetReturnValue().Set(static_cast<uint32_t>(
+      DecodeUtf8CodePoint(bytes, count, true).byte_length));
+}
+
 constexpr bool isSurrogatePair(uint16_t lead, uint16_t trail) {
   return (lead & 0xfc00) == 0xd800 && (trail & 0xfc00) == 0xdc00;
 }
@@ -599,6 +620,8 @@ void BindingData::CreatePerIsolateProperties(IsolateData* isolate_data,
   SetMethod(isolate, target, "encodeInto", EncodeInto);
   SetMethodNoSideEffect(isolate, target, "encodeUtf8String", EncodeUtf8String);
   SetMethodNoSideEffect(isolate, target, "decodeUTF8", DecodeUTF8);
+  SetMethodNoSideEffect(
+      isolate, target, "getUtf8CharacterLength", GetUtf8CharacterLength);
   SetMethodNoSideEffect(isolate, target, "toASCII", ToASCII);
   SetMethodNoSideEffect(isolate, target, "toUnicode", ToUnicode);
 }
@@ -616,6 +639,7 @@ void BindingData::RegisterTimerExternalReferences(
   registry->Register(EncodeInto);
   registry->Register(EncodeUtf8String);
   registry->Register(DecodeUTF8);
+  registry->Register(GetUtf8CharacterLength);
   registry->Register(ToASCII);
   registry->Register(ToUnicode);
 }

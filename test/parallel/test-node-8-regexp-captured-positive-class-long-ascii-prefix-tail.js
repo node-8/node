@@ -125,17 +125,19 @@ assertMatchIndices(
   malformedSubject);
 assert.strictEqual(malformed.lastIndex, 37);
 
-// Adjacent selectors remain unchanged.
-assert.strictEqual(regexp('', mixedSource, tail33).exec(field + tail33), null);
-assert.strictEqual(
-  regexp(prefix33, mixedSource, tail17).exec(prefix33 + field + tail17),
-  null);
-assert.strictEqual(
-  regexp('', '((' + classSource + '+))', tail17).exec(field + tail17),
-  null);
-assert.strictEqual(
-  regexp('', mixedSource, tail17, 'duy').exec(field + tail17),
-  null);
+// Generic composition covers the neighbors of the optimized selectors.
+assertMatchIndices(
+  [[0, 37], [0, 4], [2, 4]], regexp('', mixedSource, tail33), field + tail33);
+assertMatchIndices(
+  [[0, 54], [33, 37], [35, 37]], regexp(prefix33, mixedSource, tail17),
+  prefix33 + field + tail17);
+assertMatchIndices(
+  [[0, 21], [0, 4], [0, 4]], regexp('', '((' + classSource + '+))', tail17),
+  field + tail17);
+assertMatchIndices(
+  [[0, 21], [0, 4], [2, 4]], regexp('', mixedSource, tail17, 'duy'),
+  field + tail17);
+// Ignore-case composition remains a separate migration.
 assert.strictEqual(
   regexp('', mixedSource, tail17, 'dui').exec(field + tail17),
   null);

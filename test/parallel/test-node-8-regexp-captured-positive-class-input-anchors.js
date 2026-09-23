@@ -72,15 +72,15 @@ assertMatchIndices(
   regexp('', mixedExact, ''),
   'zz' + prefix + field + tail);
 
-assert.strictEqual(
-  regexp('', mixedExact, '$').exec('zz' + prefix + field + tail),
-  null);
-assert.strictEqual(
-  regexp('^', '((' + classSource + '+))', '$').exec(prefix + field + tail),
-  null);
-assert.strictEqual(
-  regexp('^', '((' + classSource + ')+)', '$').exec(prefix + field + tail),
-  null);
+assertMatchIndices(
+  [[2, 12], [6, 11], [8, 11]], regexp('', mixedExact, '$'),
+  'zz' + prefix + field + tail);
+assertMatchIndices(
+  [[0, 10], [4, 9], [4, 9]], regexp('^', '((' + classSource + '+))', '$'),
+  prefix + field + tail);
+assertMatchIndices(
+  [[0, 10], [4, 9], [6, 9]], regexp('^', '((' + classSource + ')+)', '$'),
+  prefix + field + tail);
 assert.strictEqual(
   regexp('^', mixedExact, '$', 'dmu').exec(prefix + field + tail),
   null);
@@ -88,16 +88,16 @@ assert.strictEqual(
   new RegExp('^\\b' + prefix + mixedExact + tail + '$', 'du')
     .exec(prefix + field + tail),
   null);
-assert.strictEqual(
-  new RegExp('^(?=' + prefix + ')' + prefix + mixedExact + tail + '$', 'du')
-    .exec(prefix + field + tail),
-  null);
-assert.strictEqual(
-  regexp('^', '((' + classSource + '){1})', '$').exec(prefix + eAcute + tail),
-  null);
-assert.strictEqual(
-  regexp('^', mixedExact, '$', 'duy').exec(prefix + field + tail),
-  null);
+assert.deepStrictEqual(Array.from(assertMatchIndices(
+  [[0, 10], [4, 9], [6, 9]],
+  new RegExp('^(?=' + prefix + ')' + prefix + mixedExact + tail + '$', 'du'),
+  prefix + field + tail)), [prefix + field + tail, field, cjk]);
+assertMatchIndices(
+  [[0, 7], [4, 6], [4, 6]], regexp('^', '((' + classSource + '){1})', '$'),
+  prefix + eAcute + tail);
+assertMatchIndices(
+  [[0, 10], [4, 9], [6, 9]], regexp('^', mixedExact, '$', 'duy'),
+  prefix + field + tail);
 assert.strictEqual(
   regexp('^', mixedExact, '$', 'dui').exec(prefix + field + tail),
   null);

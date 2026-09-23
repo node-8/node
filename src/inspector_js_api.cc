@@ -112,6 +112,10 @@ class JSBindingsConnection : public BaseObject {
     CHECK(info[0]->IsFunction());
     Local<Function> callback = info[0].As<Function>();
     new JSBindingsConnection(env, info.This(), callback);
+    // Select at runtime, not when Bind is captured in the startup snapshot.
+    if (env->experimental_node_8_string_semantics()) {
+      SetMethod(env->context(), info.This(), "dispatch", DispatchUtf8);
+    }
   }
 
   // See https://github.com/nodejs/node/pull/46942
@@ -135,6 +139,19 @@ class JSBindingsConnection : public BaseObject {
     if (session->session_) {
       session->session_->Dispatch(
           ToInspectorString(info.GetIsolate(), info[0])->string());
+    }
+  }
+
+  static void DispatchUtf8(const FunctionCallbackInfo<Value>& info) {
+    JSBindingsConnection* session;
+    ASSIGN_OR_RETURN_UNWRAP(&session, info.This());
+    CHECK(info[0]->IsString());
+
+    if (session->session_) {
+      // Inspector JSON requests accept UTF-8, not widened storage bytes.
+      const auto message = ToProtocolString(info.GetIsolate(), info[0]);
+      session->session_->Dispatch(StringView(
+          reinterpret_cast<const uint8_t*>(message.data()), message.size()));
     }
   }
 
@@ -429,9 +446,11 @@ void RegisterExternalReferences(ExternalReferenceRegistry* registry) {
 
   registry->Register(JSBindingsConnection<LocalConnection>::New);
   registry->Register(JSBindingsConnection<LocalConnection>::Dispatch);
+  registry->Register(JSBindingsConnection<LocalConnection>::DispatchUtf8);
   registry->Register(JSBindingsConnection<LocalConnection>::Disconnect);
   registry->Register(JSBindingsConnection<MainThreadConnection>::New);
   registry->Register(JSBindingsConnection<MainThreadConnection>::Dispatch);
+  registry->Register(JSBindingsConnection<MainThreadConnection>::DispatchUtf8);
   registry->Register(JSBindingsConnection<MainThreadConnection>::Disconnect);
   registry->Register(PutNetworkResource);
 }

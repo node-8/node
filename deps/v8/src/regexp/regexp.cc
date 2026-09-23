@@ -471,12 +471,481 @@ RegExpTree* GetPositiveClassByteTree(RegExpTree* tree, RegExpFlags flags,
   return zone->New<RegExpDisjunction>(alternatives);
 }
 
+struct Node8ComposedState {
+  bool contains_lookaround = false;
+  bool contains_decoder = false;
+  bool contains_lookbehind = false;
+  bool contains_backreference = false;
+  bool contains_forward_dispatch = false;
+};
+
+RegExpTree* NewNode8ByteChoices(ZoneList<RegExpTree*>* choices, Zone* zone) {
+  DCHECK_GT(choices->length(), 0);
+  return choices->length() == 1 ? choices->first()
+                                : zone->New<RegExpDisjunction>(choices);
+}
+
+RegExpTree* NewNode8MalformedPrefix(RegExpTree* prefix, Node8ByteRange next,
+                                    Zone* zone) {
+  Node8ByteSequence continuation{{next}, 1};
+  auto* assertion =
+      zone->New<RegExpLookaround>(NewNode8ByteSequenceTree(continuation, zone),
+                                  false, 0, 0, RegExpLookaround::LOOKAHEAD, 0);
+  auto* nodes = zone->New<ZoneList<RegExpTree*>>(2, zone);
+  nodes->Add(prefix, zone);
+  nodes->Add(assertion, zone);
+  return zone->New<RegExpAlternative>(nodes);
+}
+
+// Match precisely one malformed maximal subpart. A valid nonmember must never
+// fall back to a shorter prefix or to one of its continuation bytes.
+void AppendNode8MalformedAlternatives(ZoneList<RegExpTree*>* choices,
+                                      Zone* zone) {
+  for (Node8ByteRange range :
+       {Node8ByteRange{0x80, 0xc1}, Node8ByteRange{0xf5, 0xff}}) {
+    choices->Add(NewNode8ByteSequenceTree({{range}, 1}, zone), zone);
+  }
+  struct LeadGroup {
+    Node8ByteRange lead;
+    Node8ByteRange second;
+    int width;
+  };
+  static constexpr LeadGroup groups[] = {
+      {{0xc2, 0xdf}, {0x80, 0xbf}, 2}, {{0xe0, 0xe0}, {0xa0, 0xbf}, 3},
+      {{0xe1, 0xef}, {0x80, 0xbf}, 3}, {{0xf0, 0xf0}, {0x90, 0xbf}, 4},
+      {{0xf1, 0xf3}, {0x80, 0xbf}, 4}, {{0xf4, 0xf4}, {0x80, 0x8f}, 4}};
+  auto* prefixes = zone->New<ZoneList<RegExpTree*>>(11, zone);
+  for (const auto& group : groups) {
+    Node8ByteSequence prefix{{group.lead, group.second, {0x80, 0xbf}}, 1};
+    auto* lead = NewNode8ByteSequenceTree(prefix, zone);
+    if (group.second.from == 0x80 && group.second.to == 0xbf) {
+      prefixes->Add(lead, zone);
+    } else {
+      choices->Add(NewNode8MalformedPrefix(lead, group.second, zone), zone);
+    }
+    for (prefix.length = 2; prefix.length < group.width; ++prefix.length) {
+      prefixes->Add(NewNode8ByteSequenceTree(prefix, zone), zone);
+    }
+  }
+  // Share the guard after the prefix disjunction, not its mutable registers
+  // across different assertions. EOF satisfies each negative lookahead.
+  choices->Add(NewNode8MalformedPrefix(NewNode8ByteChoices(prefixes, zone),
+                                       {0x80, 0xbf}, zone),
+               zone);
+}
+
+RegExpTree* GetNode8ForwardClassByteTree(ZoneList<CharacterRange>* ranges,
+                                         bool negated, RegExpFlags flags,
+                                         Node8ComposedState* state,
+                                         Zone* zone) {
+  CharacterRange::Canonicalize(ranges);
+  // In legacy syntax an astral source character may have become two surrogate
+  // members. If all surrogate units and all astral code points are already
+  // included, both forms are redundant. BMP holes such as FEFF in \S are safe.
+  const bool covers_astral = !ranges->is_empty() &&
+                             ranges->last().from() <= 0x10000 &&
+                             ranges->last().to() == 0x10ffff;
+  if (!IsEitherUnicode(flags)) {
+    for (CharacterRange range : *ranges) {
+      if (range.from() <= 0xdfff && range.to() >= 0xd800 &&
+          !(covers_astral && range.from() <= 0xd800 && range.to() >= 0xdfff)) {
+        return nullptr;
+      }
+    }
+  }
+  if (negated) {
+    auto* complement =
+        zone->New<ZoneList<CharacterRange>>(ranges->length() + 1, zone);
+    CharacterRange::Negate(ranges, complement, zone);
+    ranges = complement;
+  }
+  const bool all_non_ascii = !ranges->is_empty() &&
+                             ranges->last().from() <= 0x80 &&
+                             ranges->last().to() == 0x10ffff;
+  bool replacement = false;
+  ZoneVector<Node8ByteSequence> sequences(zone);
+  for (CharacterRange range : *ranges) {
+    replacement |= range.Contains(unibrow::Utf8::kBadChar);
+    if (!AddNode8CodePointRange(range, &sequences)) return nullptr;
+  }
+  // Two invalid-lead ranges, six one-byte prefixes, five two-byte prefixes,
+  // and three three-byte prefixes, counted before sharing their guards.
+  constexpr size_t kMalformedAlternatives = 16;
+  if (replacement &&
+      sequences.size() + kMalformedAlternatives > kMaxNode8ClassAlternatives) {
+    return nullptr;
+  }
+  if (sequences.empty()) {
+    return zone->New<RegExpClassRanges>(
+        zone, ranges, RegExpClassRanges::IS_CERTAINLY_ONE_CODE_POINT);
+  }
+  const bool use_ascii_dispatch = replacement || negated;
+  auto* ascii_ranges = zone->New<ZoneList<CharacterRange>>(4, zone);
+  auto* choices = zone->New<ZoneList<RegExpTree*>>(
+      static_cast<int>(sequences.size()) + (replacement ? 6 : 0), zone);
+  for (const auto& sequence : sequences) {
+    if (use_ascii_dispatch && sequence.length == 1) {
+      ascii_ranges->Add(
+          CharacterRange::Range(sequence.bytes[0].from, sequence.bytes[0].to),
+          zone);
+      continue;
+    }
+    choices->Add(NewNode8ByteSequenceTree(sequence, zone), zone);
+  }
+  if (replacement) {
+    AppendNode8MalformedAlternatives(choices, zone);
+    state->contains_decoder = true;
+  }
+  if (!ascii_ranges->is_empty()) {
+    auto class_flags = RegExpClassRanges::ClassRangesFlags(
+        RegExpClassRanges::IS_CERTAINLY_ONE_CODE_POINT);
+    if (all_non_ascii) {
+      class_flags |= RegExpClassRanges::NODE8_ACCEPTS_ALL_NON_ASCII;
+    }
+    auto* dispatch =
+        zone->New<RegExpClassRanges>(zone, ascii_ranges, class_flags);
+    if (!choices->is_empty()) {
+      if (!all_non_ascii) {
+        dispatch->set_node8_positive_non_ascii_tree(
+            NewNode8ByteChoices(choices, zone));
+      }
+      state->contains_forward_dispatch = true;
+    }
+    return dispatch;
+  }
+  return NewNode8ByteChoices(choices, zone);
+}
+
 RegExpTree* UnwrapCaptureChain(RegExpTree* tree, int* capture_count) {
   while (tree->IsCapture()) {
     (*capture_count)++;
     tree = tree->AsCapture()->body();
   }
   return tree;
+}
+
+#ifdef V8_INTL_SUPPORT
+bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, Zone* zone,
+                                 ZoneList<RegExpTree*>* output, int depth = 0) {
+  if (depth > 100) return false;
+  auto append_code_point = [&](base::uc32 code_point) {
+    // Replacement matching also needs malformed-subpart decoding.
+    if (code_point == unibrow::Utf8::kBadChar) return false;
+    auto* ranges =
+        CharacterRange::List(zone, CharacterRange::Singleton(code_point));
+    if (code_point <= 0x7f && (code_point | 0x20) != 'k' &&
+        (code_point | 0x20) != 's') {
+      base::uc32 upper = code_point & ~0x20;
+      if (upper >= 'A' && upper <= 'Z') {
+        ranges->Add(CharacterRange::Singleton(code_point ^ 0x20), zone);
+      }
+    } else {
+      CharacterRange::AddUnicodeCaseEquivalents(ranges, zone);
+    }
+    ZoneVector<Node8ByteSequence> sequences(zone);
+    for (CharacterRange range : *ranges) {
+      if (!AddNode8CodePointRange(range, &sequences)) return false;
+    }
+    auto* choices = zone->New<ZoneList<RegExpTree*>>(
+        static_cast<int>(sequences.size()), zone);
+    for (const auto& sequence : sequences) {
+      choices->Add(NewNode8ByteSequenceTree(sequence, zone), zone);
+    }
+    output->Add(choices->length() == 1
+                    ? choices->first()
+                    : zone->New<RegExpDisjunction>(choices),
+                zone);
+    return true;
+  };
+  if (tree->IsAtom()) {
+    auto data = tree->AsAtom()->data();
+    for (int i = 0; i < data.length(); ++i) {
+      base::uc32 code_point = data[i];
+      if (unibrow::Utf16::IsLeadSurrogate(code_point) &&
+          i + 1 < data.length() &&
+          unibrow::Utf16::IsTrailSurrogate(data[i + 1])) {
+        code_point = unibrow::Utf16::CombineSurrogatePair(data[i], data[i + 1]);
+        ++i;
+      }
+      if (!append_code_point(code_point)) return false;
+    }
+    return true;
+  }
+  if (auto code_point = GetSingletonClassCodePoint(tree, zone)) {
+    return append_code_point(*code_point);
+  }
+  if (tree->IsText()) {
+    for (const auto& element : *tree->AsText()->elements()) {
+      if (!AppendNode8CaseFoldedLiteral(element.tree(), zone, output, depth + 1)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (tree->IsAlternative()) {
+    for (auto* node : *tree->AsAlternative()->nodes()) {
+      if (!AppendNode8CaseFoldedLiteral(node, zone, output, depth + 1)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return false;
+}
+#endif  // V8_INTL_SUPPORT
+
+// Lower only complete, case-sensitive compositions. Existing byte trees must
+// not pass through here: their atom values are already encoded bytes.
+RegExpTree* GetNode8ComposedLiteralByteTree(RegExpTree* tree, RegExpFlags flags,
+                                            Zone* zone,
+                                            Node8ComposedState* state,
+                                            int depth = 0) {
+  if (depth > 100) return nullptr;
+  if (tree->IsAtom()) {
+    auto data = tree->AsAtom()->data();
+    bool non_ascii = false;
+    bool replacement = false;
+    for (base::uc16 unit : data) {
+      if (!IsEitherUnicode(flags) && unit >= 0xd800 && unit <= 0xdfff) {
+        return nullptr;
+      }
+      non_ascii |= unit > 0x7f;
+      replacement |= unit == unibrow::Utf8::kBadChar;
+    }
+    if (!non_ascii) return tree;
+    if (data.length() > RegExpTree::kInfinity / 3) return nullptr;
+    auto bytes = zone->AllocateVector<base::uc16>(data.length() * 3);
+    int byte_length = 0;
+    int run_start = 0;
+    auto* nodes =
+        replacement ? zone->New<ZoneList<RegExpTree*>>(2, zone) : nullptr;
+    auto append_run = [&]() {
+      if (byte_length > run_start) {
+        nodes->Add(zone->New<RegExpAtom>(base::Vector<const base::uc16>(
+                       bytes.data() + run_start, byte_length - run_start)),
+                   zone);
+        run_start = byte_length;
+      }
+    };
+    for (int i = 0; i < data.length(); ++i) {
+      base::uc32 code_point = data[i];
+      if (code_point == unibrow::Utf8::kBadChar) {
+        append_run();
+        auto* ranges = CharacterRange::List(
+            zone, CharacterRange::Singleton(unibrow::Utf8::kBadChar));
+        auto* consumer =
+            GetNode8ForwardClassByteTree(ranges, false, flags, state, zone);
+        DCHECK_NOT_NULL(consumer);
+        nodes->Add(consumer, zone);
+        continue;
+      }
+      if (unibrow::Utf16::IsLeadSurrogate(code_point) &&
+          i + 1 < data.length() &&
+          unibrow::Utf16::IsTrailSurrogate(data[i + 1])) {
+        code_point = unibrow::Utf16::CombineSurrogatePair(data[i], data[i + 1]);
+        ++i;
+      }
+      char encoded[unibrow::Utf8::kMaxEncodedSize];
+      unsigned length = unibrow::Utf8::Encode(
+          encoded, code_point, unibrow::Utf16::kNoPreviousCharacter, false);
+      for (unsigned j = 0; j < length; ++j) {
+        bytes[byte_length++] = static_cast<uint8_t>(encoded[j]);
+      }
+    }
+    if (replacement) {
+      append_run();
+      return nodes->length() == 1 ? nodes->first()
+                                  : zone->New<RegExpAlternative>(nodes);
+    }
+    return zone->New<RegExpAtom>(
+        base::Vector<const base::uc16>(bytes.data(), byte_length));
+  }
+  if (tree->IsClassRanges()) {
+    auto* character_class = tree->AsClassRanges();
+    auto* ranges = character_class->ranges(zone);
+    bool ascii = !character_class->is_negated();
+    for (CharacterRange range : *ranges) ascii &= range.to() <= 0x7f;
+    if (ascii) return tree;
+    return GetNode8ForwardClassByteTree(ranges, character_class->is_negated(),
+                                        flags, state, zone);
+  }
+  // /v wraps a simple class in a union and a class-set operand. Do not evaluate
+  // general sets in place: a later unsupported leaf must leave the old AST.
+  if (tree->IsClassSetOperand()) {
+    auto* operand = tree->AsClassSetOperand();
+    if (operand->has_strings()) return nullptr;
+    bool ascii = true;
+    for (CharacterRange range : *operand->ranges()) {
+      ascii &= range.to() <= 0x7f;
+    }
+    return ascii ? tree
+                 : GetNode8ForwardClassByteTree(operand->ranges(), false, flags,
+                                                state, zone);
+  }
+  if (tree->IsClassSetExpression()) {
+    auto* expression = tree->AsClassSetExpression();
+    if (expression->operation() !=
+            RegExpClassSetExpression::OperationType::kUnion ||
+        expression->operands()->length() != 1) {
+      return nullptr;
+    }
+    RegExpTree* operand = expression->operands()->first();
+    if (expression->is_negated()) {
+      if (!operand->IsClassSetOperand() ||
+          operand->AsClassSetOperand()->has_strings()) {
+        return nullptr;
+      }
+      return GetNode8ForwardClassByteTree(
+          operand->AsClassSetOperand()->ranges(), true, flags, state, zone);
+    }
+    auto* lowered =
+        GetNode8ComposedLiteralByteTree(operand, flags, zone, state, depth + 1);
+    return lowered == operand ? tree : lowered;
+  }
+  if (tree->IsEmpty()) return tree;
+  if (tree->IsBackReference()) {
+    state->contains_backreference = true;
+    return tree;
+  }
+  if (tree->IsAssertion()) {
+    auto type = tree->AsAssertion()->assertion_type();
+    return type == RegExpAssertion::Type::START_OF_INPUT ||
+                   type == RegExpAssertion::Type::END_OF_INPUT
+               ? tree
+               : nullptr;
+  }
+  if (tree->IsGroup()) {
+    auto* group = tree->AsGroup();
+    if (group->flags() != flags) return nullptr;
+    RegExpTree* lowered = GetNode8ComposedLiteralByteTree(
+        group->body(), flags, zone, state, depth + 1);
+    if (lowered == nullptr) return nullptr;
+    return lowered == group->body()
+               ? tree
+               : zone->New<RegExpGroup>(lowered, group->flags());
+  }
+  if (tree->IsLookaround()) {
+    // The caller installs scalar candidate search for accepted nullable roots.
+    // Do not publish this traversal result until the complete tree succeeds.
+    state->contains_lookaround = true;
+    auto* lookaround = tree->AsLookaround();
+    state->contains_lookbehind |=
+        lookaround->type() == RegExpLookaround::LOOKBEHIND;
+    RegExpTree* lowered = GetNode8ComposedLiteralByteTree(
+        lookaround->body(), flags, zone, state, depth + 1);
+    if (lowered == nullptr) return nullptr;
+    if (lowered == lookaround->body()) return tree;
+    return zone->New<RegExpLookaround>(
+        lowered, lookaround->is_positive(), lookaround->capture_count(),
+        lookaround->capture_from(), lookaround->type(), lookaround->index());
+  }
+  if (tree->IsCapture() || tree->IsQuantifier()) {
+    RegExpTree* body = tree->IsCapture() ? tree->AsCapture()->body()
+                                         : tree->AsQuantifier()->body();
+    RegExpTree* lowered =
+        GetNode8ComposedLiteralByteTree(body, flags, zone, state, depth + 1);
+    if (lowered == nullptr) return nullptr;
+    if (lowered == body) return tree;
+    if (tree->IsCapture()) {
+      auto* capture = tree->AsCapture();
+      auto* result = zone->New<RegExpCapture>(capture->index());
+      result->set_name(capture->name());
+      result->set_body(lowered);
+      return result;
+    }
+    auto* quantifier = tree->AsQuantifier();
+    return zone->New<RegExpQuantifier>(quantifier->min(), quantifier->max(),
+                                       quantifier->quantifier_type(),
+                                       quantifier->index(), lowered);
+  }
+  if (tree->IsText() || tree->IsAlternative() || tree->IsDisjunction()) {
+    auto* source = tree->IsText() ? nullptr
+                   : tree->IsAlternative()
+                       ? tree->AsAlternative()->nodes()
+                       : tree->AsDisjunction()->alternatives();
+    const int length = tree->IsText() ? tree->AsText()->elements()->length()
+                                      : source->length();
+    auto node_at = [&](int i) {
+      return tree->IsText() ? tree->AsText()->elements()->at(i).tree()
+                            : source->at(i);
+    };
+    ZoneList<RegExpTree*>* nodes = nullptr;
+    for (int i = 0; i < length; ++i) {
+      RegExpTree* node = node_at(i);
+      RegExpTree* lowered =
+          GetNode8ComposedLiteralByteTree(node, flags, zone, state, depth + 1);
+      if (lowered == nullptr) return nullptr;
+      if (nodes == nullptr && lowered != node) {
+        nodes = zone->New<ZoneList<RegExpTree*>>(length, zone);
+        for (int j = 0; j < i; ++j) nodes->Add(node_at(j), zone);
+      }
+      if (nodes != nullptr) nodes->Add(lowered, zone);
+    }
+    if (nodes == nullptr) return tree;
+    if (tree->IsDisjunction()) return zone->New<RegExpDisjunction>(nodes);
+    return zone->New<RegExpAlternative>(nodes);
+  }
+  return nullptr;
+}
+
+// A byte skip may land inside a character. It is safe only if every successful
+// nonempty path rejects a continuation as its first consumed byte. Inspect the
+// lowered tree, including nullable prefixes and dispatchers' non-ASCII edges.
+bool Node8CanStartOnContinuation(RegExpTree* tree, Zone* zone, int depth = 0) {
+  if (depth > 120) return true;
+  if (tree->IsEmpty() || tree->IsAssertion() || tree->IsLookaround())
+    return false;
+  if (tree->IsAtom()) {
+    auto data = tree->AsAtom()->data();
+    return !data.empty() && data[0] >= 0x80 && data[0] <= 0xbf;
+  }
+  if (tree->IsClassRanges()) {
+    auto* character_class = tree->AsClassRanges();
+    if (character_class->node8_accepts_all_non_ascii()) return true;
+    auto* non_ascii = character_class->node8_positive_non_ascii_tree();
+    if (non_ascii != nullptr &&
+        Node8CanStartOnContinuation(non_ascii, zone, depth + 1)) {
+      return true;
+    }
+    for (CharacterRange range : *character_class->ranges(zone)) {
+      if (character_class->is_negated()) {
+        if (range.from() <= 0x80 && range.to() >= 0xbf) return false;
+      } else if (range.from() <= 0xbf && range.to() >= 0x80) {
+        return true;
+      }
+    }
+    return character_class->is_negated();
+  }
+  if (tree->IsCapture()) {
+    return Node8CanStartOnContinuation(tree->AsCapture()->body(), zone,
+                                       depth + 1);
+  }
+  if (tree->IsGroup()) {
+    return Node8CanStartOnContinuation(tree->AsGroup()->body(), zone,
+                                       depth + 1);
+  }
+  if (tree->IsQuantifier()) {
+    auto* quantifier = tree->AsQuantifier();
+    return quantifier->max() != 0 &&
+           Node8CanStartOnContinuation(quantifier->body(), zone, depth + 1);
+  }
+  if (tree->IsText() || tree->IsAlternative() || tree->IsDisjunction()) {
+    auto* source = tree->IsText() ? nullptr
+                   : tree->IsAlternative()
+                       ? tree->AsAlternative()->nodes()
+                       : tree->AsDisjunction()->alternatives();
+    const int length = tree->IsText() ? tree->AsText()->elements()->length()
+                                      : source->length();
+    for (int i = 0; i < length; ++i) {
+      auto* child = tree->IsText() ? tree->AsText()->elements()->at(i).tree()
+                                   : source->at(i);
+      if (Node8CanStartOnContinuation(child, zone, depth + 1)) return true;
+      if (!tree->IsDisjunction() && child->min_match() > 0) return false;
+    }
+    return false;
+  }
+  // Unlowered /v ASCII wrappers and unknown nodes conservatively disable skips.
+  return true;
 }
 
 RegExpTree* GetPositiveClassQuantifierByteTree(RegExpTree* tree,
@@ -1176,7 +1645,10 @@ MaybeDirectHandle<Object> RegExp::Compile(Isolate* isolate,
     ZoneVector<base::uc16> compound_atom(&zone);
     std::optional<base::Vector<const base::uc16>> atom_pattern =
         GetLiteralAtomPattern(parse_result.tree, &compound_atom);
-    if (atom_pattern.has_value()) {
+    if (atom_pattern.has_value() &&
+        (!v8_flags.utf8_string_semantics ||
+         std::find(atom_pattern->begin(), atom_pattern->end(),
+                   unibrow::Utf8::kBadChar) == atom_pattern->end())) {
       DirectHandle<String> atom_string;
       if (v8_flags.utf8_string_semantics) {
         ASSIGN_RETURN_ON_EXCEPTION(
@@ -1826,6 +2298,7 @@ int Wtf8ClassExecRawImpl(const String::FlatContent& subject,
       matches++;
       if (is_empty) {
         if (match_end == bytes.size()) break;
+        // This negated ASCII class can be empty only on an ASCII member.
         position = match_end + 1;
       } else {
         position = match_end;
@@ -1837,8 +2310,8 @@ int Wtf8ClassExecRawImpl(const String::FlatContent& subject,
     while (matches < max_matches && position <= bytes.size()) {
       int start = static_cast<int>(position);
       size_t match_end = position;
+      size_t next_position = position;
       if (position < bytes.size()) {
-        size_t next_position = position;
         unibrow::uchar code_point;
         if (V8_LIKELY(bytes[position] <= unibrow::Utf8::kMaxOneByteChar)) {
           code_point = bytes[position];
@@ -1866,7 +2339,7 @@ int Wtf8ClassExecRawImpl(const String::FlatContent& subject,
       if (!global) break;
       if (is_empty) {
         if (match_end == bytes.size()) break;
-        position = match_end + 1;
+        position = next_position;
       } else {
         position = match_end;
       }
@@ -1878,8 +2351,8 @@ int Wtf8ClassExecRawImpl(const String::FlatContent& subject,
       int start = static_cast<int>(position);
       size_t match_end = position;
       size_t capture_start = position;
+      size_t next_position = position;
       if (position < bytes.size()) {
-        size_t next_position = position;
         unibrow::uchar code_point =
             DecodeNode8ClassCodePoint(bytes, &next_position);
         bool is_match = Node8ClassContains(ranges, range_count,
@@ -1927,7 +2400,7 @@ int Wtf8ClassExecRawImpl(const String::FlatContent& subject,
       if (!global) break;
       if (is_empty) {
         if (match_end == bytes.size()) break;
-        position = match_end + 1;
+        position = next_position;
       } else {
         position = match_end;
       }
@@ -2205,6 +2678,7 @@ bool RegExpImpl::CompileIrregexpFromSource(
   // pattern strings from generating invalid regexp code.
   SBXCHECK_EQ(compile_data.capture_count, re_data->capture_count());
 
+  RegExpTree* original_tree = compile_data.tree;
   if (v8_flags.utf8_string_semantics && is_one_byte && !IsIgnoreCase(flags) &&
       !IsSticky(flags)) {
     RegExpTree* byte_tree = nullptr;
@@ -2235,6 +2709,47 @@ bool RegExpImpl::CompileIrregexpFromSource(
       if (!ContainsMalformedNode8Bytes(pattern)) compile_data.tree = byte_tree;
     }
   }
+
+  if (v8_flags.utf8_string_semantics && is_one_byte && !IsIgnoreCase(flags) &&
+      compile_data.tree == original_tree) {
+    Node8ComposedState state;
+    RegExpTree* byte_tree =
+        GetNode8ComposedLiteralByteTree(original_tree, flags, &zone, &state);
+    const bool scalar_search =
+        state.contains_decoder ||
+        (state.contains_lookaround && original_tree->min_match() == 0);
+    if (byte_tree != nullptr &&
+        !(state.contains_decoder &&
+          (state.contains_lookbehind || state.contains_backreference)) &&
+        !(state.contains_forward_dispatch && state.contains_lookbehind) &&
+        (byte_tree != original_tree || scalar_search) &&
+        !ContainsMalformedNode8Bytes(pattern)) {
+      compile_data.tree = byte_tree;
+      // ASCII identity trees such as (?!^|$) need this search strategy too.
+      compile_data.node8_scalar_search = scalar_search;
+      compile_data.node8_decoder_sensitive =
+          state.contains_decoder &&
+          Node8CanStartOnContinuation(byte_tree, &zone);
+    }
+  }
+
+#ifdef V8_INTL_SUPPORT
+  if (v8_flags.utf8_string_semantics && is_one_byte && IsIgnoreCase(flags) &&
+      compile_data.capture_count == 0) {
+    ZoneList<RegExpTree*> literals(4, &zone);
+    if (AppendNode8CaseFoldedLiteral(compile_data.tree, &zone, &literals) &&
+        !literals.is_empty() && !ContainsMalformedNode8Bytes(pattern)) {
+      compile_data.tree = literals.length() == 1
+                              ? literals.first()
+                              : zone.New<RegExpAlternative>(
+                                    zone.New<ZoneList<RegExpTree*>>(literals, &zone));
+      // The new tree matches encoded bytes. Do not fold its bytes as Latin-1
+      // or interpret them as Unicode units; observable flags remain on re_data.
+      flags &= ~(RegExpFlag::kIgnoreCase | RegExpFlag::kUnicode |
+                 RegExpFlag::kUnicodeSets);
+    }
+  }
+#endif  // V8_INTL_SUPPORT
 
   const bool can_be_zero_length = compile_data.tree->min_match() == 0;
   re_data->set_can_be_zero_length(can_be_zero_length);
@@ -2397,6 +2912,8 @@ bool RegExpImpl::CompileIrregexpFromBytecode(
     RegExpMacroAssembler::GlobalMode mode = RegExpMacroAssembler::GLOBAL;
     if (!re_data->can_be_zero_length()) {
       mode = RegExpMacroAssembler::GLOBAL_NO_ZERO_LENGTH_CHECK;
+    } else if (v8_flags.utf8_string_semantics && is_one_byte) {
+      mode = RegExpMacroAssembler::GLOBAL_UTF8;
     } else if (IsEitherUnicode(flags)) {
       mode = RegExpMacroAssembler::GLOBAL_UNICODE;
     }
@@ -2835,13 +3352,20 @@ bool RegExpImpl::Compile(Isolate* isolate, Zone* zone, RegExpCompileData* data,
   static const int kMaxBacksearchLimit = 1024;
   if (is_end_anchored && !is_start_anchored && !IsSticky(flags) &&
       max_length < kMaxBacksearchLimit) {
-    macro_assembler->SetCurrentPositionFromEnd(max_length);
+    // Scalar search needs at most three bytes to synchronize if this forward
+    // jump lands inside a character. Those extra candidates precede end-max
+    // and cannot match an end-anchored body. The assembler never rewinds the
+    // requested origin. A zero-width body can jump directly to end.
+    const int padding = data->node8_scalar_search && max_length > 0 ? 3 : 0;
+    macro_assembler->SetCurrentPositionFromEnd(max_length + padding);
   }
 
   if (IsGlobal(flags)) {
     RegExpMacroAssembler::GlobalMode mode = RegExpMacroAssembler::GLOBAL;
     if (data->tree->min_match() > 0) {
       mode = RegExpMacroAssembler::GLOBAL_NO_ZERO_LENGTH_CHECK;
+    } else if (v8_flags.utf8_string_semantics && is_one_byte) {
+      mode = RegExpMacroAssembler::GLOBAL_UTF8;
     } else if (IsEitherUnicode(flags)) {
       mode = RegExpMacroAssembler::GLOBAL_UNICODE;
     }
@@ -2956,6 +3480,10 @@ RegExpGlobalExecRunner::RegExpGlobalExecRunner(
 }
 
 int RegExpGlobalExecRunner::AdvanceZeroLength(int last_index) const {
+  if (v8_flags.utf8_string_semantics) {
+    return static_cast<int>(
+        RegExpUtils::AdvanceStringIndex(*subject_, last_index, true));
+  }
   if (IsEitherUnicode(JSRegExp::AsRegExpFlags(regexp_data_->flags())) &&
       static_cast<uint32_t>(last_index + 1) < subject_->length() &&
       unibrow::Utf16::IsLeadSurrogate(subject_->Get(last_index)) &&
@@ -2990,6 +3518,15 @@ int32_t* RegExpGlobalExecRunner::FetchNext() {
       case RegExpData::Type::EXPERIMENTAL: {
         DCHECK(ExperimentalRegExp::IsCompiled(
             TrustedCast<IrRegExpData>(regexp_data_), isolate_));
+        if (v8_flags.utf8_string_semantics && last_match[0] == last_end_index) {
+          // A full batch may end in an empty match. Resume after its scalar,
+          // rather than reporting the same match again in the next batch.
+          last_end_index = AdvanceZeroLength(last_end_index);
+          if (static_cast<uint32_t>(last_end_index) > subject_->length()) {
+            num_matches_ = 0;
+            return nullptr;
+          }
+        }
         DisallowGarbageCollection no_gc;
         num_matches_ = ExperimentalRegExp::ExecRaw(
             isolate_, RegExp::kFromRuntime,

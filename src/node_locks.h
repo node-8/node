@@ -20,7 +20,8 @@ class Lock final : public MemoryRetainer {
   enum class Mode { Shared, Exclusive };
 
   Lock(Environment* env,
-       const std::u16string& name,
+       const std::string& name,
+       v8::Local<v8::String> name_string,
        Mode mode,
        const std::string& client_id,
        v8::Local<v8::Promise::Resolver> waiting,
@@ -30,8 +31,11 @@ class Lock final : public MemoryRetainer {
   Lock(const Lock&) = delete;
   Lock& operator=(const Lock&) = delete;
 
-  // Resource name for this lock as DOMString
-  const std::u16string& name() const { return name_; }
+  // Lossless byte key; retain the original DOMString for observable metadata.
+  const std::string& name() const { return name_; }
+  v8::Local<v8::String> name_string() const {
+    return name_string_.Get(env_->isolate());
+  }
   // Lock mode (shared or exclusive).
   Mode mode() const { return mode_; }
   // Client identifier string.
@@ -59,7 +63,8 @@ class Lock final : public MemoryRetainer {
 
  private:
   Environment* env_;
-  std::u16string name_;
+  std::string name_;
+  v8::Global<v8::String> name_string_;
   Mode mode_;
   std::string client_id_;
   bool stolen_ = false;
@@ -103,7 +108,8 @@ class LockRequest final {
               v8::Local<v8::Promise::Resolver> waiting,
               v8::Local<v8::Promise::Resolver> released,
               v8::Local<v8::Function> callback,
-              const std::u16string& name,
+              const std::string& name,
+              v8::Local<v8::String> name_string,
               Lock::Mode mode,
               std::string client_id,
               bool steal,
@@ -113,7 +119,10 @@ class LockRequest final {
   LockRequest(const LockRequest&) = delete;
   LockRequest& operator=(const LockRequest&) = delete;
 
-  const std::u16string& name() const { return name_; }
+  const std::string& name() const { return name_; }
+  v8::Local<v8::String> name_string() const {
+    return name_string_.Get(env_->isolate());
+  }
   Lock::Mode mode() const { return mode_; }
   const std::string& client_id() const { return client_id_; }
   bool steal() const { return steal_; }
@@ -131,7 +140,8 @@ class LockRequest final {
 
  private:
   Environment* env_;
-  std::u16string name_;
+  std::string name_;
+  v8::Global<v8::String> name_string_;
   Lock::Mode mode_;
   std::string client_id_;
   bool steal_;
@@ -172,7 +182,7 @@ class LockManager final {
 
   mutable Mutex mutex_;
   // All entries for a given Environment* are purged in CleanupEnvironment().
-  std::unordered_map<std::u16string, std::deque<std::shared_ptr<Lock>>>
+  std::unordered_map<std::string, std::deque<std::shared_ptr<Lock>>>
       held_locks_;
   std::deque<std::unique_ptr<LockRequest>> pending_queue_;
   std::unordered_set<Environment*> registered_envs_;

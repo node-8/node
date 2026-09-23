@@ -29,7 +29,8 @@ assertMatchIndices(
   [[0, 10], [4, 9], [6, 9]],
   expression(true, mixedExact),
   subject);
-assert.strictEqual(expression(false, mixedExact).exec(subject), null);
+assertMatchIndices(
+  [[0, 10], [4, 9], [6, 9]], expression(false, mixedExact), subject);
 assertMatchIndices(
   [[0, 10], [4, 9], [6, 9]],
   expression(true, '((' + classSource + '){1,3})'),
@@ -78,28 +79,29 @@ assertMatchIndices(
   [[1, 11], [5, 10], [7, 10]], afterMalformed, malformedPrefix);
 assert.strictEqual(afterMalformed.lastIndex, 11);
 
-assert.strictEqual(
+assertMatchIndices(
+  [[0, 10], [4, 9], undefined],
   new RegExp(
     '(?:key=(' + classSource + '{2})!|other=(' + classSource + '{2})!)',
-    'du').exec(subject),
-  null);
-assert.strictEqual(
-  new RegExp('(?:zero|key=' + mixedExact + '!|none)', 'du').exec(subject),
-  null);
-assert.strictEqual(
-  new RegExp('((?:key=' + mixedExact + '!|none))', 'du').exec(subject),
-  null);
+    'du'), subject);
+assertMatchIndices(
+  [[0, 10], [4, 9], [6, 9]],
+  new RegExp('(?:zero|key=' + mixedExact + '!|none)', 'du'), subject);
+assertMatchIndices(
+  [[0, 10], [0, 10], [4, 9], [6, 9]],
+  new RegExp('((?:key=' + mixedExact + '!|none))', 'du'), subject);
 assertMatchIndices(
   [[0, 10], [4, 9], [6, 9]],
   new RegExp('(?:^key=' + mixedExact + '!|none)', 'du'),
   subject);
-assert.strictEqual(
-  new RegExp('^(?:key=((' + classSource + '+))!|none)$', 'du').exec(subject),
-  null);
-assert.strictEqual(
-  expression(true, '((' + classSource + '){1})').exec('key=' + eAcute + '!'),
-  null);
-assert.strictEqual(expression(true, mixedExact, 'duy').exec(subject), null);
+assertMatchIndices(
+  [[0, 10], [4, 9], [4, 9]],
+  new RegExp('^(?:key=((' + classSource + '+))!|none)$', 'du'), subject);
+assertMatchIndices(
+  [[0, 7], [4, 6], [4, 6]], expression(true, '((' + classSource + '){1})'),
+  'key=' + eAcute + '!');
+assertMatchIndices(
+  [[0, 10], [4, 9], [6, 9]], expression(true, mixedExact, 'duy'), subject);
 assert.strictEqual(expression(true, mixedExact, 'dui').exec(subject), null);
 assert.strictEqual(
   new RegExp('(?i:key=' + mixedExact + '!|none)', 'du').exec(subject),

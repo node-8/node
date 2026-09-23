@@ -648,19 +648,11 @@ static void GetStringWidth(const FunctionCallbackInfo<Value>& args) {
   bool ambiguous_as_full_width = args[1]->IsTrue();
   bool expand_emoji_sequence = !args[2]->IsBoolean() || args[2]->IsTrue();
 
-  TwoByteValue value(args.GetIsolate(), args[0]);
-  // reinterpret_cast is required by windows to compile
-  UChar* str = reinterpret_cast<UChar*>(*value);
-  static_assert(sizeof(*str) == sizeof(**value),
-                "sizeof(*str) == sizeof(**value)");
-  UChar32 c = 0;
-  UChar32 p;
-  size_t n = 0;
+  UChar32 previous = 0;
   uint32_t width = 0;
-
-  while (n < value.length()) {
-    p = c;
-    U16_NEXT(str, n, value.length(), c);
+  auto add_width = [&](UChar32 c) {
+    const UChar32 p = previous;
+    previous = c;
     // Don't count individual emoji codepoints that occur within an
     // emoji sequence. This is not necessarily foolproof. Some
     // environments display emoji sequences in the appropriate
@@ -673,12 +665,39 @@ static void GetStringWidth(const FunctionCallbackInfo<Value>& args) {
     // check and count each code within an emoji sequence separately.
     // https://www.unicode.org/reports/tr51/tr51-16.html#Emoji_ZWJ_Sequences
     if (!expand_emoji_sequence &&
-        n > 0 && p == 0x200d &&  // 0x200d == ZWJ (zero width joiner)
+        p == 0x200d &&  // 0x200d == ZWJ (zero width joiner)
         (u_hasBinaryProperty(c, UCHAR_EMOJI_PRESENTATION) ||
          u_hasBinaryProperty(c, UCHAR_EMOJI_MODIFIER))) {
-      continue;
+      return;
     }
     width += GetColumnWidth(c, ambiguous_as_full_width);
+  };
+
+  {
+    String::ValueView value(args.GetIsolate(), args[0].As<String>());
+    if (value.is_one_byte()) {
+      if (value.uses_utf8_semantics()) {
+        for (size_t offset = 0; offset < value.length();) {
+          const auto decoded = DecodeUtf8CodePoint(
+              value.data8() + offset, value.length() - offset, true);
+          add_width(decoded.value);
+          offset += decoded.byte_length;
+        }
+      } else {
+        for (size_t offset = 0; offset < value.length(); offset++) {
+          add_width(value.data8()[offset]);
+        }
+      }
+    } else {
+      // reinterpret_cast is required by windows to compile.
+      const UChar* str = reinterpret_cast<const UChar*>(value.data16());
+      static_assert(sizeof(*str) == sizeof(*value.data16()));
+      for (size_t offset = 0; offset < value.length();) {
+        UChar32 c;
+        U16_NEXT(str, offset, value.length(), c);
+        add_width(c);
+      }
+    }
   }
   args.GetReturnValue().Set(width);
 }

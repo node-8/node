@@ -50,13 +50,13 @@ const empty = Array.from(
   (eAcute + cjk).matchAll(/(([^^]){0,3}?)/dgu));
 assert.deepStrictEqual(
   empty.map((match) => match.indices[0]),
-  [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5]]);
+  [[0, 0], [2, 2], [5, 5]]);
 assert.deepStrictEqual(
   empty.map((match) => match.indices[1]),
   empty.map((match) => match.indices[0]));
 assert.deepStrictEqual(
   empty.map((match) => match.indices[2]),
-  [undefined, undefined, undefined, undefined, undefined, undefined]);
+  [undefined, undefined, undefined]);
 
 const replacementCalls = [];
 assert.strictEqual(subject.replace(

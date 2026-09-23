@@ -47,6 +47,6 @@ check(sticky, eAcute + 'a', 1, raw(0xa9));
 assert.strictEqual(sticky.lastIndex, 2);
 
 const emptyMatches = Array.from(cjk.matchAll(/[^\n]*?/gu));
-assert.deepStrictEqual(emptyMatches.map((match) => match.index), [0, 1, 2, 3]);
+assert.deepStrictEqual(emptyMatches.map((match) => match.index), [0, 3]);
 assert.deepStrictEqual(emptyMatches.map((match) => bytes(match[0])),
-                       [[], [], [], []]);
+                       [[], []]);

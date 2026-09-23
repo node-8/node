@@ -96,4 +96,4 @@ const empty = Array.from(
   (eAcute + 'x').matchAll(/[\u00e9-\u00eb]{0,2}?/dgu));
 assert.deepStrictEqual(
   empty.map((match) => match.indices[0]),
-  [[0, 0], [1, 1], [2, 2], [3, 3]]);
+  [[0, 0], [2, 2], [3, 3]]);

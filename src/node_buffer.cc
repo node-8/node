@@ -744,10 +744,14 @@ void Fill(const FunctionCallbackInfo<Value>& args) {
     memcpy(ts_obj_data + start, *str, std::min(str_length, fill_length));
 
   } else if (enc == UCS2) {
-    str_length = str_obj->Length() * sizeof(uint16_t);
-    node::TwoByteValue str(env->isolate(), args[1]);
-    if constexpr (IsBigEndian())
-      CHECK(nbytes::SwapBytes16(reinterpret_cast<char*>(&str[0]), str_length));
+    // The stored length bounds the UTF-16 output, but is not its exact length
+    // for node-8 byte Strings. Encode before byte-truncating the fill pattern.
+    MaybeStackBuffer<uint16_t> str(str_obj->Length());
+    str_length = StringBytes::Write(env->isolate(),
+                                    reinterpret_cast<char*>(*str),
+                                    str.length() * sizeof(uint16_t),
+                                    str_obj,
+                                    UCS2);
 
     memcpy(ts_obj_data + start, *str, std::min(str_length, fill_length));
 
@@ -1125,34 +1129,22 @@ void IndexOfString(const FunctionCallbackInfo<Value>& args) {
   size_t result = search_end;
 
   if (enc == UCS2) {
-    TwoByteValue needle_value(isolate, needle);
-    if (search_end < 2 || needle_value.length() < 1) {
+    if (search_end < 2 || needle_length < 2) {
       return args.GetReturnValue().Set(-1);
     }
 
-    if constexpr (IsBigEndian()) {
-      StringBytes::InlineDecoder decoder;
-      if (decoder.Decode(env, needle, enc).IsNothing()) return;
-      const uint16_t* decoded_string =
-          reinterpret_cast<const uint16_t*>(decoder.out());
-
-      if (decoded_string == nullptr)
-        return args.GetReturnValue().Set(-1);
-
-      result = nbytes::SearchString(reinterpret_cast<const uint16_t*>(haystack),
-                                    search_end / 2,
-                                    decoded_string,
-                                    decoder.size() / 2,
-                                    offset / 2,
-                                    is_forward);
-    } else {
-      result = nbytes::SearchString(reinterpret_cast<const uint16_t*>(haystack),
-                                    search_end / 2,
-                                    needle_value.out(),
-                                    needle_value.length(),
-                                    offset / 2,
-                                    is_forward);
-    }
+    MaybeStackBuffer<uint16_t> needle_data(needle_length / 2);
+    StringBytes::Write(isolate,
+                       reinterpret_cast<char*>(needle_data.out()),
+                       needle_length,
+                       needle,
+                       enc);
+    result = nbytes::SearchString(reinterpret_cast<const uint16_t*>(haystack),
+                                  search_end / 2,
+                                  needle_data.out(),
+                                  needle_length / 2,
+                                  offset / 2,
+                                  is_forward);
     result *= 2;
   } else if (enc == UTF8) {
     Utf8Value needle_value(isolate, needle);
@@ -1582,9 +1574,11 @@ static void Atob(const FunctionCallbackInfo<Value>& args) {
   }
 
   if (result.error == simdutf::error_code::SUCCESS) {
-    auto value = OneByteString(env->isolate(),
-                               reinterpret_cast<const uint8_t*>(buffer.out()),
-                               result.count);
+    auto value = String::NewFromBytes(
+        env->isolate(),
+        reinterpret_cast<const uint8_t*>(buffer.out()),
+        v8::NewStringType::kNormal,
+        result.count).ToLocalChecked();
     return args.GetReturnValue().Set(value);
   }
 

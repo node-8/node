@@ -6,6 +6,7 @@
 
 #include "src/objects/string-inl.h"
 #include "src/regexp/experimental/experimental.h"
+#include "src/regexp/regexp-utils.h"
 #include "src/sandbox/check.h"
 
 namespace v8 {
@@ -514,8 +515,10 @@ class NfaInterpreter {
         break;
       } else {
         // Zero-length match, more input.  We don't want to report more matches
-        // here endlessly, so we advance by 1.
-        SetInputIndex(match_end + 1);
+        // here endlessly. node-8 advances by a WTF-8 maximal subpart; stock
+        // retains its non-Unicode code-unit behavior.
+        SetInputIndex(static_cast<int>(
+            RegExpUtils::AdvanceStringIndex(input_object_, match_end, false)));
 
         // TODO(mbid,v8:10765): If we're in unicode mode, we have to advance to
         // the next codepoint, not to the next code unit. See also

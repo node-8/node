@@ -72,43 +72,46 @@ assertMatchIndices(
   expression(mixedExact),
   raw(0x80) + 'none');
 const malformedClass = '[\ufffd\u00e9]';
-assert.strictEqual(
-  expression('((' + malformedClass + '){2})')
-    .exec('key=' + raw(0x80) + eAcute + '!'),
-  null);
+const malformedField = raw(0x80) + eAcute;
+const malformedSubject = 'key=' + malformedField + '!';
+for (const tail of ['', 'after']) {
+  assert.deepStrictEqual(Array.from(assertMatchIndices(
+    [[0, 8], [4, 7], [5, 7]], expression('((' + malformedClass + '){2})'),
+    malformedSubject + tail)), [malformedSubject, malformedField, eAcute]);
+}
 
-assert.strictEqual(
-  new RegExp('(?:key=' + mixedExact + '!$|none)', 'du').exec(subject),
-  null);
+assertMatchIndices(
+  [[0, 10], [4, 9], [6, 9]],
+  new RegExp('(?:key=' + mixedExact + '!$|none)', 'du'), subject);
 assert.strictEqual(expression(mixedExact, '', 'dmu').exec(subject), null);
 assert.strictEqual(
   new RegExp('(?:^\\bkey=' + mixedExact + '!|none)', 'du').exec(subject),
   null);
-assert.strictEqual(
-  new RegExp('(?:^(?=key=)key=' + mixedExact + '!|none)', 'du').exec(subject),
-  null);
-assert.strictEqual(
-  expression('((' + classSource + '+))', '$').exec(subject),
-  null);
-assert.strictEqual(
-  expression('((' + classSource + ')+)', '$').exec(subject),
-  null);
-assert.strictEqual(
-  expression('((' + classSource + '){1})').exec('key=' + eAcute + '!'),
-  null);
-assert.strictEqual(
-  new RegExp('(?:none|^key=' + mixedExact + '!)', 'du').exec(subject),
-  null);
-assert.strictEqual(
+assert.deepStrictEqual(Array.from(assertMatchIndices(
+  [[0, 10], [4, 9], [6, 9]],
+  new RegExp('(?:^(?=key=)key=' + mixedExact + '!|none)', 'du'), subject)),
+                       [subject, field, cjk]);
+assertMatchIndices(
+  [[0, 10], [4, 9], [4, 9]], expression('((' + classSource + '+))', '$'), subject);
+assertMatchIndices(
+  [[0, 10], [4, 9], [6, 9]], expression('((' + classSource + ')+)', '$'), subject);
+assertMatchIndices(
+  [[0, 7], [4, 6], [4, 6]], expression('((' + classSource + '){1})'),
+  'key=' + eAcute + '!');
+assertMatchIndices(
+  [[0, 10], [4, 9], [6, 9]],
+  new RegExp('(?:none|^key=' + mixedExact + '!)', 'du'), subject);
+assertMatchIndices(
+  [[0, 10], [4, 9], undefined],
   new RegExp(
     '(?:^key=(' + classSource + '{2})!|other=(' +
       classSource + '{2})!)',
-    'du').exec(subject),
-  null);
-assert.strictEqual(
-  new RegExp('((?:^key=' + mixedExact + '!|none))', 'du').exec(subject),
-  null);
-assert.strictEqual(expression(mixedExact, '', 'duy').exec(subject), null);
+    'du'), subject);
+assertMatchIndices(
+  [[0, 10], [0, 10], [4, 9], [6, 9]],
+  new RegExp('((?:^key=' + mixedExact + '!|none))', 'du'), subject);
+assertMatchIndices(
+  [[0, 10], [4, 9], [6, 9]], expression(mixedExact, '', 'duy'), subject);
 assert.strictEqual(expression(mixedExact, '', 'dui').exec(subject), null);
 assert.strictEqual(
   new RegExp('(?i:^key=' + mixedExact + '!|none)', 'du').exec(subject),
