@@ -98,6 +98,8 @@ assertMatchIndices(
 assertMatchIndices(
   [[0, 10], [4, 9], [6, 9]], regexp('^', mixedExact, '$', 'duy'),
   prefix + field + tail);
-assert.strictEqual(
-  regexp('^', mixedExact, '$', 'dui').exec(prefix + field + tail),
-  null);
+assert.deepStrictEqual(
+  Array.from(assertMatchIndices(
+    [[0, 10], [4, 9], [6, 9]], regexp('^', mixedExact, '$', 'dui'),
+    prefix + field + tail)),
+  [prefix + field + tail, field, cjk]);

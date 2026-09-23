@@ -112,7 +112,11 @@ assertMatchIndices(
   new RegExp('((?:^key=' + mixedExact + '!|none))', 'du'), subject);
 assertMatchIndices(
   [[0, 10], [4, 9], [6, 9]], expression(mixedExact, '', 'duy'), subject);
-assert.strictEqual(expression(mixedExact, '', 'dui').exec(subject), null);
+assert.deepStrictEqual(
+  Array.from(assertMatchIndices(
+    [[0, 10], [4, 9], [6, 9]], expression(mixedExact, '', 'dui'),
+    subject)),
+  [subject, field, cjk]);
 assert.strictEqual(
   new RegExp('(?i:^key=' + mixedExact + '!|none)', 'du').exec(subject),
   null);

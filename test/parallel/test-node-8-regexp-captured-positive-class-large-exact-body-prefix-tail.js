@@ -118,6 +118,8 @@ assertMatchIndices(
 assertMatchIndices(
   [[0, 49], [0, 40], [38, 40]], regexp('', exactMixed(20), tail9, 'duy'),
   field20 + tail9);
-assert.strictEqual(
-  regexp('', exactMixed(20), tail9, 'dui').exec(field20 + tail9),
-  null);
+assert.deepStrictEqual(
+  Array.from(assertMatchIndices(
+    [[0, 49], [0, 40], [38, 40]], regexp('', exactMixed(20), tail9, 'dui'),
+    field20 + tail9)),
+  [field20 + tail9, field20, eCircumflex]);

@@ -137,7 +137,9 @@ assertMatchIndices(
 assertMatchIndices(
   [[0, 21], [0, 4], [2, 4]], regexp('', mixedSource, tail17, 'duy'),
   field + tail17);
-// Ignore-case composition remains a separate migration.
-assert.strictEqual(
-  regexp('', mixedSource, tail17, 'dui').exec(field + tail17),
-  null);
+// Ignore-case classes preserve the same byte spans and captures.
+assert.deepStrictEqual(
+  Array.from(assertMatchIndices(
+    [[0, 21], [0, 4], [2, 4]], regexp('', mixedSource, tail17, 'dui'),
+    field + tail17)),
+  [field + tail17, field, eCircumflex]);

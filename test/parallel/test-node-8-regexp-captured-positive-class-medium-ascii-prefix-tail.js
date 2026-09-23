@@ -142,7 +142,8 @@ assertMatchIndices(
 assertMatchIndices(
   [[0, 13], [0, 4], [2, 4]], /(([A-C\u00e9-\u00eb])+)123456789/duy,
   eAcute + eCircumflex + tail9);
-assert.strictEqual(
-  /(([a-c\u00e9-\u00eb])+)123456789/dui.exec(
-    eAcute + eCircumflex + tail9),
-  null);
+assert.deepStrictEqual(
+  Array.from(assertMatchIndices(
+    [[0, 13], [0, 4], [2, 4]], /(([a-c\u00e9-\u00eb])+)123456789/dui,
+    eAcute + eCircumflex + tail9)),
+  [eAcute + eCircumflex + tail9, eAcute + eCircumflex, eCircumflex]);
