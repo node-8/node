@@ -1,6 +1,6 @@
 # node-8 待补性能测试清单
 
-更新：2026-09-23。状态：**全部新增测速仍暂停，本文只登记，不授权启动测试。**
+更新：2026-09-24。状态：**全部新增测速仍暂停，本文只登记，不授权启动测试。**
 
 2026-09-22 用户决定先修功能，等有可靠硬件后再恢复性能验收。
 “功能测试通过”“提交已推送”“OpenSpec 功能任务完成”都不表示性能通过。
@@ -90,7 +90,7 @@ P05/P06/P07/P09/P10/P11 对应 OpenSpec 仍明确保留性能或内存待办；
 
 ## 4. 暂停测速后持续接入的 RegExp 批次
 
-本节为 **P20，所有行均待测**。除 R13 新的折叠引用外，表列 Node 提交已接入。
+本节为 **P20，所有行均待测**。表列 Node 功能修改均已接入；R13 的新正向折叠引用已于 2026-09-24 完成 Node 功能验收，性能仍待测。
 每行需要独立结果，即使多个场景共用一次构建，也不能用总平均掩盖回退。
 
 | 子项 | 功能批次 / Node 提交定位 | 重点负载与成本 |
@@ -107,7 +107,7 @@ P05/P06/P07/P09/P10/P11 对应 OpenSpec 仍明确保留性能或内存待办；
 | R10 | sensitive / folded 词边界；`19d1749068`、`d3c40482aa` | ASCII 词、Kelvin/long-s、Unicode 相邻字符、零宽根；长模式编译图与合并 ASCII 片段成本。 |
 | R11 | local i 启用/禁用与混合作用域；`adafb07885`、`9df5fd755b` | 频繁切换、嵌套恢复、组外 sensitive 控制、编译开销与不必要折叠。 |
 | R12 | folded / local-disable 前瞻与后瞻；`7a0b2a1ba8`、`b4f64c1dd9`、`08c9a4c60f`、`c42a29fa94` | 正/负断言、捕获、可空根、逆向匹配、长非匹配前缀；不混入仍未支持的组合。 |
-| R13 | sensitive local-disable 反向引用 `ba1ce3db4b`；新正向 folded 引用 V8 `6a8f0d817f`，Node 尚未完成构建 | 必测短 ASCII /u 引用的 C-call 成本、闭合 ASCII 旧快路、k↔K/ſ↔S 不等宽、短/长 capture、空/未匹配 capture、失败/回溯；编译期 100 步 capture 分析的成本。先完成 Node 功能前置。 |
+| R13 | sensitive local-disable 反向引用 `ba1ce3db4b`；新正向 folded 引用 V8 `6a8f0d817f`，Node 镜像同批验收完成 | 必测短 ASCII /u 引用的 C-call 成本、闭合 ASCII 旧快路、k↔K/ſ↔S 不等宽、短/长 capture、空/未匹配 capture、失败/回溯；编译期 100 步 capture 分析的成本。功能前置已完成，性能仍待测。 |
 
 共同维度：
 
@@ -185,7 +185,8 @@ Node SHA-256：`cb0798770d28ca8e088c4f407e5b1aa8605d71bf06f2664725c318188eaa5dd4
 | P07 单独候选 | `node-buffer-latin1-candidate-2026-09-13-FJOzjN/` | node `059c178a5bba034b5763bba2930df572cc42c14638d5a447974e7b5939b15c82` |
 | P09 单独候选 | `node-icu-width-candidate-2026-09-14-bBVmZO/` | node `1e94fb9b51f093df2b7e86245c369051fa12197d6933af8daaf4f0ac49254d3c` |
 | P10 单独候选 | `node-web-locks-candidate-2026-09-14-BIuhau/` | node `acd72ce313e8087a436352926903c9c53b93267a4917134683989f3c590cc0b7` |
-| 最新已验收 Node 功能快照（ba1ce3db4b） | `node8-local-disable-backref-correctness-20260923-hOjAlD/` | node `4cbbfbfab205dd6ddb74792bfcc75cddd177abaa6e82e6ef972b0bd8b9da5e07` |
+| 上一版 Node 功能快照（ba1ce3db4b） | `node8-local-disable-backref-correctness-20260923-hOjAlD/` | node `4cbbfbfab205dd6ddb74792bfcc75cddd177abaa6e82e6ef972b0bd8b9da5e07` |
+| 本批 Node 正向 folded 引用功能快照（2026-09-24） | `node8-forward-fold-backref-correctness-20260924-xCAs66/`（二进制 node） | node `59681d6799c4f1368bb5575f0eb3839ab1c1d7c9af731204405ef4d04d2fd79f` |
 | 最新 V8 正向 folded 引用（6a8f0d817f） | `v8-forward-fold-backref-correctness-20260923-o3Zl5r/`（二进制 v8/out/x64.release/d8） | d8 `9b9ec34dc4eb2c1fd769c46296d95a34c7410aba6e3cc46ba60d77711355936c` |
 
 P02 更早的 control d8 SHA：
@@ -193,9 +194,11 @@ P02 更早的 control d8 SHA：
 确切会话依赖见 `results/regexp-fixed-frequency-8ZTGje/user/session/session.jsonl`。
 trim 两份旧快照均含相同的未验收 RegExp 原型，不能顺带验收该原型。
 
-截至本次登记，新正向 folded 引用的 Node 镜像构建在固定 3,500 秒时限退出，
-剩余 320 步，尚无新 Node 候选。不要拿 `node/out/Release/node` 的旧二进制
-配上新源码标签测速。后续仅文档提交也不改变上述“功能快照”的身份。
+2026-09-24 已续编完成剩余 320 步。新 Node 通过 53 组专项/实际功能检查、
+28 组历史回归和 WebStorage 24 项检查；本地副本完成 62 次独立执行并封存。
+功能证据见 `results/2026-09-24-node-forward-fold-backref-verified.md`。
+这不构成性能验收，P20/R13 不销项。测速仍须先核对二进制 SHA；
+仅文档提交也不改变上述“功能快照”的身份。
 恢复副本不一定包含完整源码/构建环境；不得依赖缺失文件时悄悄回落到工作区。
 
 ## 8. 重新开测前与销项条件
