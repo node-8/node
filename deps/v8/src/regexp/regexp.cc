@@ -490,8 +490,8 @@ struct Node8ComposedState {
   bool contains_decoder = false;
   bool contains_lookbehind = false;
   bool contains_backreference = false;
+  bool contains_backward_backreference = false;
   bool contains_folded_backreference = false;
-  bool contains_forward_dispatch = false;
 };
 
 RegExpTree* NewNode8ByteChoices(ZoneList<RegExpTree*>* choices, Zone* zone) {
@@ -500,43 +500,79 @@ RegExpTree* NewNode8ByteChoices(ZoneList<RegExpTree*>* choices, Zone* zone) {
                                 : zone->New<RegExpDisjunction>(choices);
 }
 
-RegExpTree* NewNode8MalformedPrefix(RegExpTree* prefix, Node8ByteRange next,
-                                    Zone* zone) {
+RegExpTree* NewNode8GuardedPrefix(RegExpTree* prefix, Node8ByteRange next,
+                                  bool positive, Zone* zone) {
   Node8ByteSequence continuation{{next}, 1};
-  auto* assertion =
-      zone->New<RegExpLookaround>(NewNode8ByteSequenceTree(continuation, zone),
-                                  false, 0, 0, RegExpLookaround::LOOKAHEAD, 0);
+  auto* assertion = zone->New<RegExpLookaround>(
+      NewNode8ByteSequenceTree(continuation, zone), positive, 0, 0,
+      RegExpLookaround::LOOKAHEAD, 0);
   auto* nodes = zone->New<ZoneList<RegExpTree*>>(2, zone);
   nodes->Add(prefix, zone);
   nodes->Add(assertion, zone);
   return zone->New<RegExpAlternative>(nodes);
 }
 
+struct Node8LeadGroup {
+  Node8ByteRange lead;
+  Node8ByteRange second;
+  int width;
+};
+constexpr Node8LeadGroup kNode8LeadGroups[] = {
+    {{0xc2, 0xdf}, {0x80, 0xbf}, 2}, {{0xe0, 0xe0}, {0xa0, 0xbf}, 3},
+    {{0xe1, 0xef}, {0x80, 0xbf}, 3}, {{0xf0, 0xf0}, {0x90, 0xbf}, 4},
+    {{0xf1, 0xf3}, {0x80, 0xbf}, 4}, {{0xf4, 0xf4}, {0x80, 0x8f}, 4}};
+
+// A continuation is independent only if no valid prefix ends immediately
+// before it. Inspect at most three preceding bytes and the current byte. ED
+// accepts surrogate encodings, including incomplete prefixes, in internal
+// WTF-8.
+RegExpTree* NewNode8CodePointBoundary(Zone* zone) {
+  auto* prefixes = zone->New<ZoneList<RegExpTree*>>(11, zone);
+  auto* choices = zone->New<ZoneList<RegExpTree*>>(4, zone);
+  for (const auto& group : kNode8LeadGroups) {
+    Node8ByteSequence prefix{{group.lead, group.second, {0x80, 0xbf}}, 1};
+    for (; prefix.length < group.width; ++prefix.length) {
+      auto* tree = NewNode8ByteSequenceTree(prefix, zone);
+      if (prefix.length == 1 &&
+          (group.second.from != 0x80 || group.second.to != 0xbf)) {
+        choices->Add(NewNode8GuardedPrefix(tree, group.second, true, zone),
+                     zone);
+      } else {
+        prefixes->Add(tree, zone);
+      }
+    }
+  }
+  choices->Add(NewNode8GuardedPrefix(NewNode8ByteChoices(prefixes, zone),
+                                     {0x80, 0xbf}, true, zone),
+               zone);
+  return zone->New<RegExpLookaround>(NewNode8ByteChoices(choices, zone), false,
+                                     0, 0, RegExpLookaround::LOOKBEHIND, 0);
+}
+
 // Match precisely one malformed maximal subpart. A valid nonmember must never
 // fall back to a shorter prefix or to one of its continuation bytes.
 void AppendNode8MalformedAlternatives(ZoneList<RegExpTree*>* choices,
-                                      Zone* zone) {
+                                      Zone* zone, bool read_backward) {
   for (Node8ByteRange range :
        {Node8ByteRange{0x80, 0xc1}, Node8ByteRange{0xf5, 0xff}}) {
-    choices->Add(NewNode8ByteSequenceTree({{range}, 1}, zone), zone);
+    RegExpTree* tree = NewNode8ByteSequenceTree({{range}, 1}, zone);
+    if (read_backward && range.from == 0x80) {
+      auto* nodes = zone->New<ZoneList<RegExpTree*>>(2, zone);
+      nodes->Add(NewNode8CodePointBoundary(zone), zone);
+      nodes->Add(tree, zone);
+      tree = zone->New<RegExpAlternative>(nodes);
+    }
+    choices->Add(tree, zone);
   }
-  struct LeadGroup {
-    Node8ByteRange lead;
-    Node8ByteRange second;
-    int width;
-  };
-  static constexpr LeadGroup groups[] = {
-      {{0xc2, 0xdf}, {0x80, 0xbf}, 2}, {{0xe0, 0xe0}, {0xa0, 0xbf}, 3},
-      {{0xe1, 0xef}, {0x80, 0xbf}, 3}, {{0xf0, 0xf0}, {0x90, 0xbf}, 4},
-      {{0xf1, 0xf3}, {0x80, 0xbf}, 4}, {{0xf4, 0xf4}, {0x80, 0x8f}, 4}};
   auto* prefixes = zone->New<ZoneList<RegExpTree*>>(11, zone);
-  for (const auto& group : groups) {
+  for (const auto& group : kNode8LeadGroups) {
     Node8ByteSequence prefix{{group.lead, group.second, {0x80, 0xbf}}, 1};
     auto* lead = NewNode8ByteSequenceTree(prefix, zone);
     if (group.second.from == 0x80 && group.second.to == 0xbf) {
       prefixes->Add(lead, zone);
     } else {
-      choices->Add(NewNode8MalformedPrefix(lead, group.second, zone), zone);
+      choices->Add(NewNode8GuardedPrefix(lead, group.second, false, zone),
+                   zone);
     }
     for (prefix.length = 2; prefix.length < group.width; ++prefix.length) {
       prefixes->Add(NewNode8ByteSequenceTree(prefix, zone), zone);
@@ -544,15 +580,15 @@ void AppendNode8MalformedAlternatives(ZoneList<RegExpTree*>* choices,
   }
   // Share the guard after the prefix disjunction, not its mutable registers
   // across different assertions. EOF satisfies each negative lookahead.
-  choices->Add(NewNode8MalformedPrefix(NewNode8ByteChoices(prefixes, zone),
-                                       {0x80, 0xbf}, zone),
+  choices->Add(NewNode8GuardedPrefix(NewNode8ByteChoices(prefixes, zone),
+                                     {0x80, 0xbf}, false, zone),
                zone);
 }
 
-RegExpTree* GetNode8ForwardClassByteTree(ZoneList<CharacterRange>* ranges,
-                                         bool negated, RegExpFlags,
-                                         Node8ComposedState* state,
-                                         Zone* zone) {
+RegExpTree* GetNode8ClassByteTree(ZoneList<CharacterRange>* ranges,
+                                  bool negated, RegExpFlags,
+                                  Node8ComposedState* state, Zone* zone,
+                                  bool read_backward) {
   CharacterRange::Canonicalize(ranges);
   if (negated) {
     auto* complement =
@@ -580,7 +616,7 @@ RegExpTree* GetNode8ForwardClassByteTree(ZoneList<CharacterRange>* ranges,
     return zone->New<RegExpClassRanges>(
         zone, ranges, RegExpClassRanges::IS_CERTAINLY_ONE_CODE_POINT);
   }
-  const bool use_ascii_dispatch = replacement || negated;
+  const bool use_ascii_dispatch = !read_backward && (replacement || negated);
   auto* ascii_ranges = zone->New<ZoneList<CharacterRange>>(4, zone);
   auto* choices = zone->New<ZoneList<RegExpTree*>>(
       static_cast<int>(sequences.size()) + (replacement ? 6 : 0), zone);
@@ -594,7 +630,7 @@ RegExpTree* GetNode8ForwardClassByteTree(ZoneList<CharacterRange>* ranges,
     choices->Add(NewNode8ByteSequenceTree(sequence, zone), zone);
   }
   if (replacement) {
-    AppendNode8MalformedAlternatives(choices, zone);
+    AppendNode8MalformedAlternatives(choices, zone, read_backward);
     state->contains_decoder = true;
   }
   if (!ascii_ranges->is_empty()) {
@@ -610,7 +646,6 @@ RegExpTree* GetNode8ForwardClassByteTree(ZoneList<CharacterRange>* ranges,
         dispatch->set_node8_positive_non_ascii_tree(
             NewNode8ByteChoices(choices, zone));
       }
-      state->contains_forward_dispatch = true;
     }
     return dispatch;
   }
@@ -696,7 +731,7 @@ bool Node8CaptureCanUseByteComparison(RegExpTree* tree, Zone* zone, int* budget,
 RegExpTree* GetNode8ComposedLiteralByteTree(RegExpTree* tree, RegExpFlags flags,
                                             Zone* zone,
                                             Node8ComposedState* state,
-                                            int depth);
+                                            int depth, bool read_backward);
 
 struct Node8CaseFoldState {
   bool used_extended_syntax = false;
@@ -704,10 +739,11 @@ struct Node8CaseFoldState {
   Node8ComposedState classes;
 };
 
-bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags, Zone* zone,
-                                 ZoneList<RegExpTree*>* output,
-                                 Node8CaseFoldState* state, int depth = 0,
-                                 bool in_quantifier_body = false) {
+bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags,
+                                  Zone* zone, ZoneList<RegExpTree*>* output,
+                                  Node8CaseFoldState* state, int depth = 0,
+                                  bool in_quantifier_body = false,
+                                  bool read_backward = false) {
   if (depth > 100) return false;
   auto append_ranges = [&](ZoneList<CharacterRange>* ranges,
                            ZoneList<RegExpTree*>* destination) {
@@ -735,8 +771,8 @@ bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags, Zone* zon
     auto* ranges =
         CharacterRange::List(zone, CharacterRange::Singleton(code_point));
     if (code_point == unibrow::Utf8::kBadChar) {
-      auto* lowered = GetNode8ForwardClassByteTree(
-          ranges, false, flags, &state->classes, zone);
+      auto* lowered = GetNode8ClassByteTree(
+          ranges, false, flags, &state->classes, zone, read_backward);
       if (lowered == nullptr) return false;
       destination->Add(lowered, zone);
       state->needs_byte_lowering = true;
@@ -808,7 +844,8 @@ bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags, Zone* zon
     auto* operand = expression->operands()->first();
     if (!expression->is_negated()) {
       return AppendNode8CaseFoldedLiteral(operand, flags, zone, output, state,
-                                         depth + 1, in_quantifier_body);
+                                          depth + 1, in_quantifier_body,
+                                          read_backward);
     }
     if (!operand->IsClassSetOperand() ||
         operand->AsClassSetOperand()->has_strings()) {
@@ -828,8 +865,8 @@ bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags, Zone* zon
       forward_class |= range.Contains(unibrow::Utf8::kBadChar);
     }
     if (forward_class) {
-      auto* lowered = GetNode8ForwardClassByteTree(
-          ranges, negated_class, flags, &state->classes, zone);
+      auto* lowered = GetNode8ClassByteTree(
+          ranges, negated_class, flags, &state->classes, zone, read_backward);
       if (lowered == nullptr) return false;
       output->Add(lowered, zone);
       state->needs_byte_lowering = true;
@@ -847,7 +884,8 @@ bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags, Zone* zon
   if (tree->IsText()) {
     for (const auto& element : *tree->AsText()->elements()) {
       if (!AppendNode8CaseFoldedLiteral(element.tree(), flags, zone, output,
-                                        state, depth + 1, in_quantifier_body)) {
+                                        state, depth + 1, in_quantifier_body,
+                                        read_backward)) {
         return false;
       }
     }
@@ -856,7 +894,8 @@ bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags, Zone* zon
   if (tree->IsAlternative()) {
     for (auto* node : *tree->AsAlternative()->nodes()) {
       if (!AppendNode8CaseFoldedLiteral(node, flags, zone, output, state,
-                                        depth + 1, in_quantifier_body)) {
+                                        depth + 1, in_quantifier_body,
+                                        read_backward)) {
         return false;
       }
     }
@@ -868,7 +907,8 @@ bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags, Zone* zon
     for (auto* branch : *branches) {
       ZoneList<RegExpTree*> body(4, zone);
       if (!AppendNode8CaseFoldedLiteral(branch, flags, zone, &body, state,
-                                       depth + 1, in_quantifier_body) ||
+                                        depth + 1, in_quantifier_body,
+                                        read_backward) ||
           body.is_empty()) {
         return false;
       }
@@ -891,7 +931,8 @@ bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags, Zone* zon
     ZoneList<RegExpTree*> lowered_body(1, zone);
     // Generic loops preserve byte widths and guard empty bodies.
     if (!AppendNode8CaseFoldedLiteral(quantifier->body(), flags, zone,
-                                     &lowered_body, state, depth + 1, true) ||
+                                      &lowered_body, state, depth + 1, true,
+                                      read_backward) ||
         lowered_body.is_empty()) {
       return false;
     }
@@ -913,6 +954,7 @@ bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags, Zone* zon
                     tree, RegExpFlag::kIgnoreCase | RegExpFlag::kUnicode),
                 zone);
     state->classes.contains_backreference = true;
+    state->classes.contains_backward_backreference |= read_backward;
     state->classes.contains_folded_backreference = true;
     int budget = 100;
     for (auto* capture : *tree->AsBackReference()->captures()) {
@@ -929,7 +971,8 @@ bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags, Zone* zon
     auto* capture = tree->AsCapture();
     ZoneList<RegExpTree*> body(4, zone);
     if (!AppendNode8CaseFoldedLiteral(capture->body(), flags, zone, &body,
-                                     state, depth + 1, in_quantifier_body) ||
+                                      state, depth + 1, in_quantifier_body,
+                                      read_backward) ||
         body.is_empty()) {
       return false;
     }
@@ -946,8 +989,10 @@ bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags, Zone* zon
   if (tree->IsLookaround()) {
     auto* lookaround = tree->AsLookaround();
     ZoneList<RegExpTree*> body(4, zone);
-    if (!AppendNode8CaseFoldedLiteral(lookaround->body(), flags, zone, &body,
-                                     state, depth + 1, in_quantifier_body) ||
+    if (!AppendNode8CaseFoldedLiteral(
+            lookaround->body(), flags, zone, &body, state, depth + 1,
+            in_quantifier_body,
+            lookaround->type() == RegExpLookaround::LOOKBEHIND) ||
         body.is_empty()) {
       return false;
     }
@@ -975,8 +1020,9 @@ bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags, Zone* zon
     if (IsIgnoreCase(flags) && !IsIgnoreCase(group->flags()) &&
         (group->flags() & ~local_fold_flags) == (flags & ~local_fold_flags)) {
       Node8ComposedState sensitive;
-      RegExpTree* lowered = GetNode8ComposedLiteralByteTree(
-          group->body(), group->flags(), zone, &sensitive, depth + 1);
+      RegExpTree* lowered =
+          GetNode8ComposedLiteralByteTree(group->body(), group->flags(), zone,
+                                          &sensitive, depth + 1, read_backward);
       if (lowered == nullptr) return false;
       state->classes.contains_lookaround |= sensitive.contains_lookaround;
       state->classes.contains_lookbehind |= sensitive.contains_lookbehind;
@@ -984,8 +1030,8 @@ bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags, Zone* zon
       state->classes.contains_folded_backreference |=
           sensitive.contains_folded_backreference;
       state->classes.contains_decoder |= sensitive.contains_decoder;
-      state->classes.contains_forward_dispatch |=
-          sensitive.contains_forward_dispatch;
+      state->classes.contains_backward_backreference |=
+          sensitive.contains_backward_backreference;
       state->classes.contains_word_assertion |=
           sensitive.contains_word_assertion;
       state->used_extended_syntax = true;
@@ -1002,9 +1048,9 @@ bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags, Zone* zon
     // The caller clears internal i/u/v after lowering. Retaining this wrapper
     // would restore those flags and fold the encoded bytes a second time.
     state->used_extended_syntax = true;
-    return AppendNode8CaseFoldedLiteral(
-        group->body(), group->flags(), zone, output, state, depth + 1,
-        in_quantifier_body);
+    return AppendNode8CaseFoldedLiteral(group->body(), group->flags(), zone,
+                                        output, state, depth + 1,
+                                        in_quantifier_body, read_backward);
   }
   if (tree->IsAssertion() &&
       (tree->AsAssertion()->assertion_type() ==
@@ -1044,7 +1090,8 @@ bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags, Zone* zon
 RegExpTree* GetNode8ComposedLiteralByteTree(RegExpTree* tree, RegExpFlags flags,
                                             Zone* zone,
                                             Node8ComposedState* state,
-                                            int depth = 0) {
+                                            int depth = 0,
+                                            bool read_backward = false) {
   if (depth > 100) return nullptr;
   if (tree->IsAtom()) {
     auto data = tree->AsAtom()->data();
@@ -1076,8 +1123,8 @@ RegExpTree* GetNode8ComposedLiteralByteTree(RegExpTree* tree, RegExpFlags flags,
         append_run();
         auto* ranges = CharacterRange::List(
             zone, CharacterRange::Singleton(unibrow::Utf8::kBadChar));
-        auto* consumer =
-            GetNode8ForwardClassByteTree(ranges, false, flags, state, zone);
+        auto* consumer = GetNode8ClassByteTree(ranges, false, flags, state,
+                                               zone, read_backward);
         DCHECK_NOT_NULL(consumer);
         nodes->Add(consumer, zone);
         continue;
@@ -1103,8 +1150,8 @@ RegExpTree* GetNode8ComposedLiteralByteTree(RegExpTree* tree, RegExpFlags flags,
     bool ascii = !character_class->is_negated();
     for (CharacterRange range : *ranges) ascii &= range.to() <= 0x7f;
     if (ascii) return tree;
-    return GetNode8ForwardClassByteTree(ranges, character_class->is_negated(),
-                                        flags, state, zone);
+    return GetNode8ClassByteTree(ranges, character_class->is_negated(), flags,
+                                 state, zone, read_backward);
   }
   // /v wraps a simple class in a union and a class-set operand. Do not evaluate
   // general sets in place: a later unsupported leaf must leave the old AST.
@@ -1116,8 +1163,8 @@ RegExpTree* GetNode8ComposedLiteralByteTree(RegExpTree* tree, RegExpFlags flags,
       ascii &= range.to() <= 0x7f;
     }
     return ascii ? tree
-                 : GetNode8ForwardClassByteTree(operand->ranges(), false, flags,
-                                                state, zone);
+                 : GetNode8ClassByteTree(operand->ranges(), false, flags, state,
+                                         zone, read_backward);
   }
   if (tree->IsClassSetExpression()) {
     auto* expression = tree->AsClassSetExpression();
@@ -1132,16 +1179,17 @@ RegExpTree* GetNode8ComposedLiteralByteTree(RegExpTree* tree, RegExpFlags flags,
           operand->AsClassSetOperand()->has_strings()) {
         return nullptr;
       }
-      return GetNode8ForwardClassByteTree(
-          operand->AsClassSetOperand()->ranges(), true, flags, state, zone);
+      return GetNode8ClassByteTree(operand->AsClassSetOperand()->ranges(), true,
+                                   flags, state, zone, read_backward);
     }
-    auto* lowered =
-        GetNode8ComposedLiteralByteTree(operand, flags, zone, state, depth + 1);
+    auto* lowered = GetNode8ComposedLiteralByteTree(operand, flags, zone, state,
+                                                    depth + 1, read_backward);
     return lowered == operand ? tree : lowered;
   }
   if (tree->IsEmpty()) return tree;
   if (tree->IsBackReference()) {
     state->contains_backreference = true;
+    state->contains_backward_backreference |= read_backward;
     auto* reference = tree->AsBackReference();
     int budget = 100;
     bool byte_comparison = true;
@@ -1182,7 +1230,8 @@ RegExpTree* GetNode8ComposedLiteralByteTree(RegExpTree* tree, RegExpFlags flags,
       Node8CaseFoldState folded;
       folded.classes = *state;
       if (!AppendNode8CaseFoldedLiteral(group->body(), group->flags(), zone,
-                                       &literals, &folded, depth + 1) ||
+                                        &literals, &folded, depth + 1, false,
+                                        read_backward) ||
           literals.is_empty()) {
         return nullptr;
       }
@@ -1201,7 +1250,7 @@ RegExpTree* GetNode8ComposedLiteralByteTree(RegExpTree* tree, RegExpFlags flags,
       return nullptr;
     }
     RegExpTree* lowered = GetNode8ComposedLiteralByteTree(
-        group->body(), group->flags(), zone, state, depth + 1);
+        group->body(), group->flags(), zone, state, depth + 1, read_backward);
     if (lowered == nullptr) return nullptr;
     return lowered == group->body()
                ? tree
@@ -1215,7 +1264,8 @@ RegExpTree* GetNode8ComposedLiteralByteTree(RegExpTree* tree, RegExpFlags flags,
     state->contains_lookbehind |=
         lookaround->type() == RegExpLookaround::LOOKBEHIND;
     RegExpTree* lowered = GetNode8ComposedLiteralByteTree(
-        lookaround->body(), flags, zone, state, depth + 1);
+        lookaround->body(), flags, zone, state, depth + 1,
+        lookaround->type() == RegExpLookaround::LOOKBEHIND);
     if (lowered == nullptr) return nullptr;
     if (lowered == lookaround->body()) return tree;
     return zone->New<RegExpLookaround>(
@@ -1225,8 +1275,8 @@ RegExpTree* GetNode8ComposedLiteralByteTree(RegExpTree* tree, RegExpFlags flags,
   if (tree->IsCapture() || tree->IsQuantifier()) {
     RegExpTree* body = tree->IsCapture() ? tree->AsCapture()->body()
                                          : tree->AsQuantifier()->body();
-    RegExpTree* lowered =
-        GetNode8ComposedLiteralByteTree(body, flags, zone, state, depth + 1);
+    RegExpTree* lowered = GetNode8ComposedLiteralByteTree(
+        body, flags, zone, state, depth + 1, read_backward);
     if (lowered == nullptr) return nullptr;
     if (lowered == body) return tree;
     if (tree->IsCapture()) {
@@ -1255,8 +1305,8 @@ RegExpTree* GetNode8ComposedLiteralByteTree(RegExpTree* tree, RegExpFlags flags,
     ZoneList<RegExpTree*>* nodes = nullptr;
     for (int i = 0; i < length; ++i) {
       RegExpTree* node = node_at(i);
-      RegExpTree* lowered =
-          GetNode8ComposedLiteralByteTree(node, flags, zone, state, depth + 1);
+      RegExpTree* lowered = GetNode8ComposedLiteralByteTree(
+          node, flags, zone, state, depth + 1, read_backward);
       if (lowered == nullptr) return nullptr;
       if (nodes == nullptr && lowered != node) {
         nodes = zone->New<ZoneList<RegExpTree*>>(length, zone);
@@ -3092,8 +3142,7 @@ bool RegExpImpl::CompileIrregexpFromSource(
           state.contains_folded_backreference) &&
          original_tree->min_match() == 0);
     if (byte_tree != nullptr &&
-        !(state.contains_decoder && state.contains_lookbehind) &&
-        !(state.contains_forward_dispatch && state.contains_lookbehind) &&
+        !(state.contains_decoder && state.contains_backward_backreference) &&
         !(state.contains_folded_backreference && state.contains_lookbehind) &&
         (byte_tree != original_tree || scalar_search) &&
         !compile_data.node8_pattern_has_malformed) {
@@ -3118,10 +3167,10 @@ bool RegExpImpl::CompileIrregexpFromSource(
                                  state.classes.contains_folded_backreference) &&
                                 original_tree->min_match() == 0);
     if (lowered && !literals.is_empty() &&
+        !(state.classes.contains_decoder &&
+          state.classes.contains_backward_backreference) &&
         !(state.classes.contains_lookbehind &&
-          (state.classes.contains_decoder ||
-           state.classes.contains_forward_dispatch ||
-           state.classes.contains_folded_backreference)) &&
+          state.classes.contains_folded_backreference) &&
         !compile_data.node8_pattern_has_malformed &&
         // Preserve the original matching code for newly admitted ASCII-safe
         // compositions; existing pure-literal lowering remains unchanged.

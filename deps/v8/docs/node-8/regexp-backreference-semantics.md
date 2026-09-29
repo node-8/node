@@ -22,5 +22,6 @@ based. Ordinary string equality continues to compare raw bytes.
 The forward implementation uses bounded streaming comparison and retains direct
 byte comparison when a bounded compile-time proof establishes that the capture
 has a unique canonical encoding excluding U+FFFD. This is compiler metadata,
-not a new String flag. Reverse decoder/folded combinations remain separate
+not a new String flag. Forward exact references can also use captures made by
+lookbehind classes. Reverse decoded/folded references remain separate
 implementation work. Functional validation does not imply performance acceptance.
