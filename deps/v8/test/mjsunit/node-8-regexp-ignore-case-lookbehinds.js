@@ -145,7 +145,7 @@
     row('forward-dispatch-outside-excluded','(?<='+e+')([^a'+r+'])',upper,[C,C],
       [[2,5],[2,5]],[[1,2],[1,2]],'all'),
     row('backref-excluded','(?<=('+e+')\\1)('+c+')',join(double,C),[C,EC,C],
-      [[4,7],[2,4],[4,7]],[[2,3],[1,2],[2,3]],'stock'),
+      [[4,7],[2,4],[4,7]],[[2,3],[1,2],[2,3]],'all'),
     row('local-disable-excluded','(?-i:(?<='+e+')('+c+'))',ec,[C,C],
       [[2,5],[2,5]],[[1,2],[1,2]]),
     row('local-s-decoder-excluded','(?s:(?<=.)('+c+'))',upper,[C,C],

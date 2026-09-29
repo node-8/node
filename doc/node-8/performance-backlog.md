@@ -90,7 +90,7 @@ P05/P06/P07/P09/P10/P11 对应 OpenSpec 仍明确保留性能或内存待办；
 
 ## 4. 暂停测速后持续接入的 RegExp 批次
 
-本节为 **P20，所有行均待测**。R01–R15 的 Node 功能修改均已接入；R14、R15 于 2026-09-29 完成功能前置验证，性能仍待测。
+本节为 **P20，所有行均待测**。R01–R16 的 Node 功能修改均已接入；R14、R15、R16 于 2026-09-29 完成功能前置验证，性能仍待测。
 每行需要独立结果，即使多个场景共用一次构建，也不能用总平均掩盖回退。
 
 | 子项 | 功能批次 / Node 提交定位 | 重点负载与成本 |
@@ -110,6 +110,7 @@ P05/P06/P07/P09/P10/P11 对应 OpenSpec 仍明确保留性能或内存待办；
 | R13 | sensitive local-disable 反向引用 `ba1ce3db4b`；新正向 folded 引用 V8 `6a8f0d817f`，Node 镜像同批验收完成 | 必测短 ASCII /u 引用的 C-call 成本、闭合 ASCII 旧快路、k↔K/ſ↔S 不等宽、短/长 capture、空/未匹配 capture、失败/回溯；编译期 100 步 capture 分析的成本。功能前置已完成，性能仍待测。 |
 | R14 | 正向 decoder 与 sensitive/folded 反向引用组合；V8 `34426765c5`，Node 镜像本批功能验收完成 | 精确码点比较的 C-call 与流式解码成本；ASCII/唯一编码捕获旧快路、U+FFFD 与不同长度非法片段、短/长 capture、成功/失败/重复引用及回溯；每个引用最多 100 步的编译期捕获证明。按目标实际字节数推进，旧错误结果不能作有效性能基线。 |
 | R15 | 后瞻 decoder 字符类；V8 `37ee5b1a1b`，Node 镜像本批功能验收完成 | 反向字节选择与最多向左三字节的 continuation 边界断言成本；ASCII、合法多字节、截断/非法片段、正/负后瞻、贪婪/非贪婪重复、嵌套方向切换和失败回溯；编译期方向传递、新增断言寄存器与代码体积。正向快路回归也需后续测量；不做整串解码或码点数组。 |
+| R16 | 后瞻中的 decoded sensitive/simple-fold 反向引用；V8 `f591052b37`，Node 镜像本批功能验收完成 | 有界反向解码、五参数 C-call、不同字节宽度 capture/target 比较；ASCII、Latin、CJK、astral、WTF-8 surrogate、U+FFFD 与不同非法片段；短/长 capture、成功/失败/空/未匹配/重复引用、贪婪/非贪婪回溯、非零 global/sticky 起点和嵌套方向切换。保留 canonical 敏感引用、正向 exact/fold helper 和无引用 decoder 控制；共享 simple-fold 代码也需独立测量正向影响。主测试 `node-8-regexp-reverse-decoded-backreferences.js` 和 V8 helper `Node8Wtf8BackwardBackReferenceCompare` 仅作为功能前置；固定字节负载的性能 harness 尚需实现并冻结，旧错误输出不可作计时基线。 |
 
 共同维度：
 

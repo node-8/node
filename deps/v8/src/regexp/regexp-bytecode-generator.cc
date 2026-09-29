@@ -546,8 +546,11 @@ void RegExpBytecodeGenerator::CheckNotBackReferenceWithOptions(
     int start_reg, bool read_backward, BackReferenceComparison comparison,
     Label* on_not_equal) {
   if (comparison == BackReferenceComparison::kWtf8) {
-    DCHECK(!read_backward);
-    Emit<RegExpBytecode::kCheckNotBackRefWtf8>(start_reg, on_not_equal);
+    if (read_backward) {
+      Emit<RegExpBytecode::kCheckNotBackRefWtf8Backward>(start_reg, on_not_equal);
+    } else {
+      Emit<RegExpBytecode::kCheckNotBackRefWtf8>(start_reg, on_not_equal);
+    }
     return;
   }
   const bool unicode =

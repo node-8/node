@@ -18,8 +18,9 @@ most three preceding bytes and the current byte, without decoding the whole
 subject or allocating a code-point array.
 
 Positive and negative lookbehind, captures, quantifiers and local flags are
-covered. Forward exact references can use a capture made in lookbehind. Trees
-combining a decoder with a backward reference, and folded references with
-lookbehind, retain conservative guards. General large property/set classes and
-malformed patterns remain separate work. Functional coverage on Linux x64 does
-not establish performance or other-platform acceptance.
+covered. Forward and backward decoded references can use a capture made in
+lookbehind, including Unicode simple folding. Their target widths can differ
+from the original capture width; see `regexp-backreference-semantics.md`.
+General large property/set classes and malformed patterns remain separate work.
+Functional coverage on Linux x64 does not establish performance or other-platform
+acceptance.

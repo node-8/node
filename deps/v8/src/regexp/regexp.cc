@@ -488,9 +488,7 @@ struct Node8ComposedState {
   bool contains_lookaround = false;
   bool contains_word_assertion = false;
   bool contains_decoder = false;
-  bool contains_lookbehind = false;
   bool contains_backreference = false;
-  bool contains_backward_backreference = false;
   bool contains_folded_backreference = false;
 };
 
@@ -954,7 +952,6 @@ bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags,
                     tree, RegExpFlag::kIgnoreCase | RegExpFlag::kUnicode),
                 zone);
     state->classes.contains_backreference = true;
-    state->classes.contains_backward_backreference |= read_backward;
     state->classes.contains_folded_backreference = true;
     int budget = 100;
     for (auto* capture : *tree->AsBackReference()->captures()) {
@@ -1006,8 +1003,6 @@ bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags,
                     lookaround->type(), lookaround->index()),
                 zone);
     state->classes.contains_lookaround = true;
-    state->classes.contains_lookbehind |=
-        lookaround->type() == RegExpLookaround::LOOKBEHIND;
     state->used_extended_syntax = true;
     return true;
   }
@@ -1025,13 +1020,10 @@ bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags,
                                           &sensitive, depth + 1, read_backward);
       if (lowered == nullptr) return false;
       state->classes.contains_lookaround |= sensitive.contains_lookaround;
-      state->classes.contains_lookbehind |= sensitive.contains_lookbehind;
       state->classes.contains_backreference |= sensitive.contains_backreference;
       state->classes.contains_folded_backreference |=
           sensitive.contains_folded_backreference;
       state->classes.contains_decoder |= sensitive.contains_decoder;
-      state->classes.contains_backward_backreference |=
-          sensitive.contains_backward_backreference;
       state->classes.contains_word_assertion |=
           sensitive.contains_word_assertion;
       state->used_extended_syntax = true;
@@ -1189,7 +1181,6 @@ RegExpTree* GetNode8ComposedLiteralByteTree(RegExpTree* tree, RegExpFlags flags,
   if (tree->IsEmpty()) return tree;
   if (tree->IsBackReference()) {
     state->contains_backreference = true;
-    state->contains_backward_backreference |= read_backward;
     auto* reference = tree->AsBackReference();
     int budget = 100;
     bool byte_comparison = true;
@@ -1261,8 +1252,6 @@ RegExpTree* GetNode8ComposedLiteralByteTree(RegExpTree* tree, RegExpFlags flags,
     // Do not publish this traversal result until the complete tree succeeds.
     state->contains_lookaround = true;
     auto* lookaround = tree->AsLookaround();
-    state->contains_lookbehind |=
-        lookaround->type() == RegExpLookaround::LOOKBEHIND;
     RegExpTree* lowered = GetNode8ComposedLiteralByteTree(
         lookaround->body(), flags, zone, state, depth + 1,
         lookaround->type() == RegExpLookaround::LOOKBEHIND);
@@ -3142,8 +3131,6 @@ bool RegExpImpl::CompileIrregexpFromSource(
           state.contains_folded_backreference) &&
          original_tree->min_match() == 0);
     if (byte_tree != nullptr &&
-        !(state.contains_decoder && state.contains_backward_backreference) &&
-        !(state.contains_folded_backreference && state.contains_lookbehind) &&
         (byte_tree != original_tree || scalar_search) &&
         !compile_data.node8_pattern_has_malformed) {
       compile_data.tree = byte_tree;
@@ -3167,10 +3154,6 @@ bool RegExpImpl::CompileIrregexpFromSource(
                                  state.classes.contains_folded_backreference) &&
                                 original_tree->min_match() == 0);
     if (lowered && !literals.is_empty() &&
-        !(state.classes.contains_decoder &&
-          state.classes.contains_backward_backreference) &&
-        !(state.classes.contains_lookbehind &&
-          state.classes.contains_folded_backreference) &&
         !compile_data.node8_pattern_has_malformed &&
         // Preserve the original matching code for newly admitted ASCII-safe
         // compositions; existing pure-literal lowering remains unchanged.

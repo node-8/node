@@ -128,7 +128,7 @@
       [[0,4],[0,2]],[[0,2],[0,1]]),
     row('excluded-decoder','^(.)\\1$',pair,[pair,E],[[0,4],[0,2]],[[0,2],[0,1]]),
     row('excluded-reverse','(?<=('+e+')\\1)('+c+')',join(pair,C),[C,E,C],
-      [[4,7],[2,4],[4,7]],[[2,3],[1,2],[2,3]],'stock'),
+      [[4,7],[2,4],[4,7]],[[2,3],[1,2],[2,3]],'all'),
     row('empty-root','()\\1',join(C,E),[empty,empty],[[0,0],[0,0]],[[0,0],[0,0]])
   );
   for(const flag of ['g','y'])for(const [name,bo,so] of [

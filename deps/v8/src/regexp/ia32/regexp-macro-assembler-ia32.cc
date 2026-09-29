@@ -231,7 +231,7 @@ void RegExpMacroAssemblerIA32::CheckNotBackReferenceWithOptions(
     int start_reg, bool read_backward, BackReferenceComparison comparison,
     Label* on_no_match) {
   const bool unicode = comparison != BackReferenceComparison::kIgnoreCase;
-  const bool utf8 = UseUtf8BackReference(comparison, read_backward);
+  const bool utf8 = UseUtf8BackReference(comparison);
   DCHECK(comparison != BackReferenceComparison::kWtf8 || utf8);
   Label fallthrough;
   __ mov(edx, register_location(start_reg));  // Index of start of capture
@@ -244,7 +244,7 @@ void RegExpMacroAssemblerIA32::CheckNotBackReferenceWithOptions(
   __ j(equal, &fallthrough);
 
   // Check that there are sufficient characters left in the input.
-  // UTF-8 folds can consume fewer bytes than the capture.
+  // Decoded WTF-8 matches can consume fewer bytes than the capture.
   if (!utf8) {
     if (read_backward) {
       __ mov(eax, Operand(ebp, kStringStartMinusOneOffset));
@@ -335,7 +335,7 @@ void RegExpMacroAssemblerIA32::CheckNotBackReferenceWithOptions(
     __ push(backtrack_stackpointer());
     __ push(ebx);
 
-    static const int argument_count = 4;
+    const int argument_count = utf8 && read_backward ? 5 : 4;
     __ PrepareCallCFunction(argument_count, ecx);
     // Put arguments into allocated stack area, last argument highest on stack.
     // Parameters are
@@ -344,9 +344,16 @@ void RegExpMacroAssemblerIA32::CheckNotBackReferenceWithOptions(
     //   size_t byte_length - length of capture in bytes(!)
     //   Isolate* isolate.
 
-    // Set isolate.
+    // Set isolate, or physical WTF-8 input bounds.
     if (utf8) {
-      __ mov(Operand(esp, 3 * kSystemPointerSize), esi);
+      if (read_backward) {
+        __ mov(Operand(esp, 4 * kSystemPointerSize), esi);
+        __ mov(ecx, Operand(ebp, kStringStartMinusOneOffset));
+        __ lea(ecx, Operand(esi, ecx, times_1, 1));
+        __ mov(Operand(esp, 3 * kSystemPointerSize), ecx);
+      } else {
+        __ mov(Operand(esp, 3 * kSystemPointerSize), esi);
+      }
     } else {
       __ mov(Operand(esp, 3 * kSystemPointerSize),
              Immediate(ExternalReference::isolate_address(isolate())));
@@ -357,7 +364,7 @@ void RegExpMacroAssemblerIA32::CheckNotBackReferenceWithOptions(
     // Found by adding negative string-end offset of current position (edi)
     // to end of string.
     __ add(edi, esi);
-    if (read_backward) {
+    if (read_backward && !utf8) {
       __ sub(edi, ebx);  // Offset by length when matching backwards.
     }
     __ mov(Operand(esp, 1 * kSystemPointerSize), edi);
@@ -375,6 +382,12 @@ void RegExpMacroAssemblerIA32::CheckNotBackReferenceWithOptions(
           : unicode
               ? ExternalReference::re_case_insensitive_compare_unicode()
               : ExternalReference::re_case_insensitive_compare_non_unicode();
+      if (utf8 && read_backward) {
+        compare = comparison == BackReferenceComparison::kWtf8
+                      ? ExternalReference::re_compare_wtf8_backward()
+                      : ExternalReference::
+                            re_case_insensitive_compare_wtf8_backward();
+      }
       CallCFunctionFromIrregexpCode(compare, argument_count);
     }
     // Pop original values before reacting on result value.
@@ -388,7 +401,7 @@ void RegExpMacroAssemblerIA32::CheckNotBackReferenceWithOptions(
     BranchOrBacktrack(zero, on_no_match);
     // On success, advance position by length of capture.
     if (read_backward) {
-      __ sub(edi, ebx);
+      __ sub(edi, utf8 ? eax : ebx);
     } else {
       __ add(edi, utf8 ? eax : ebx);
     }

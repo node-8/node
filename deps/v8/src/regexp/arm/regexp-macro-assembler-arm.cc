@@ -224,7 +224,7 @@ void RegExpMacroAssemblerARM::CheckNotBackReferenceWithOptions(
     int start_reg, bool read_backward, BackReferenceComparison comparison,
     Label* on_no_match) {
   const bool unicode = comparison != BackReferenceComparison::kIgnoreCase;
-  const bool utf8 = UseUtf8BackReference(comparison, read_backward);
+  const bool utf8 = UseUtf8BackReference(comparison);
   DCHECK(comparison != BackReferenceComparison::kWtf8 || utf8);
   Label fallthrough;
   __ ldr(r0, register_location(start_reg));  // Index of start of capture
@@ -237,7 +237,7 @@ void RegExpMacroAssemblerARM::CheckNotBackReferenceWithOptions(
   __ b(eq, &fallthrough);
 
   // Check that there are enough characters left in the input.
-  // UTF-8 folds can consume fewer bytes than the capture.
+  // Decoded WTF-8 matches can consume fewer bytes than the capture.
   if (!utf8) {
     if (read_backward) {
       __ ldr(r3, MemOperand(frame_pointer(), kStringStartMinusOneOffset));
@@ -309,7 +309,7 @@ void RegExpMacroAssemblerARM::CheckNotBackReferenceWithOptions(
     }
   } else {
     DCHECK(mode() == UC16 || utf8);
-    int argument_count = 4;
+    const int argument_count = utf8 && read_backward ? 5 : 4;
     __ PrepareCallCFunction(argument_count);
 
     // r0 - offset of start of capture
@@ -330,12 +330,19 @@ void RegExpMacroAssemblerARM::CheckNotBackReferenceWithOptions(
     __ mov(r4, Operand(r1));
     // Address of current input position.
     __ add(r1, current_input_offset(), end_of_input_address());
-    if (read_backward) {
+    if (read_backward && !utf8) {
       __ sub(r1, r1, r4);
     }
-    // Isolate.
+    // Isolate, or physical WTF-8 input bounds.
     if (utf8) {
-      __ mov(r3, end_of_input_address());
+      if (read_backward) {
+        __ str(end_of_input_address(), MemOperand(sp, 0));
+        __ ldr(r3, MemOperand(frame_pointer(), kStringStartMinusOneOffset));
+        __ add(r3, r3, end_of_input_address());
+        __ add(r3, r3, Operand(1));
+      } else {
+        __ mov(r3, end_of_input_address());
+      }
     } else {
       __ mov(r3, Operand(ExternalReference::isolate_address(isolate())));
     }
@@ -349,6 +356,12 @@ void RegExpMacroAssemblerARM::CheckNotBackReferenceWithOptions(
           : unicode
               ? ExternalReference::re_case_insensitive_compare_unicode()
               : ExternalReference::re_case_insensitive_compare_non_unicode();
+      if (utf8 && read_backward) {
+        function = comparison == BackReferenceComparison::kWtf8
+                      ? ExternalReference::re_compare_wtf8_backward()
+                      : ExternalReference::
+                            re_case_insensitive_compare_wtf8_backward();
+      }
       CallCFunctionFromIrregexpCode(function, argument_count);
     }
 
@@ -358,7 +371,7 @@ void RegExpMacroAssemblerARM::CheckNotBackReferenceWithOptions(
 
     // On success, advance position by length of capture.
     if (read_backward) {
-      __ sub(current_input_offset(), current_input_offset(), r4);
+      __ sub(current_input_offset(), current_input_offset(), utf8 ? r0 : r4);
     } else {
       __ add(current_input_offset(), current_input_offset(), utf8 ? r0 : r4);
     }

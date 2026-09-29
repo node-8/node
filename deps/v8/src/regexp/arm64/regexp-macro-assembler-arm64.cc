@@ -304,7 +304,7 @@ void RegExpMacroAssemblerARM64::CheckNotBackReferenceWithOptions(
     int start_reg, bool read_backward, BackReferenceComparison comparison,
     Label* on_no_match) {
   const bool unicode = comparison != BackReferenceComparison::kIgnoreCase;
-  const bool utf8 = UseUtf8BackReference(comparison, read_backward);
+  const bool utf8 = UseUtf8BackReference(comparison);
   DCHECK(comparison != BackReferenceComparison::kWtf8 || utf8);
   Label fallthrough;
 
@@ -330,7 +330,7 @@ void RegExpMacroAssemblerARM64::CheckNotBackReferenceWithOptions(
   __ CompareAndBranch(capture_length, Operand(0), eq, &fallthrough);
 
   // Check that there are enough characters left in the input.
-  // UTF-8 folds can consume fewer bytes than the capture.
+  // Decoded WTF-8 matches can consume fewer bytes than the capture.
   if (!utf8) {
     if (read_backward) {
       __ Add(w12, string_start_minus_one(), capture_length);
@@ -409,7 +409,7 @@ void RegExpMacroAssemblerARM64::CheckNotBackReferenceWithOptions(
     }
   } else {
     DCHECK(mode() == UC16 || utf8);
-    int argument_count = 4;
+    const int argument_count = utf8 && read_backward ? 5 : 4;
 
     PushCachedRegisters();
 
@@ -426,12 +426,18 @@ void RegExpMacroAssemblerARM64::CheckNotBackReferenceWithOptions(
     __ Mov(w2, capture_length);
     // Address of current input position.
     __ Add(x1, input_end(), Operand(current_input_offset(), SXTW));
-    if (read_backward) {
+    if (read_backward && !utf8) {
       __ Sub(x1, x1, Operand(capture_length, SXTW));
     }
-    // Isolate.
+    // Isolate, or physical WTF-8 input bounds.
     if (utf8) {
-      __ Mov(x3, input_end());
+      if (read_backward) {
+        __ Mov(x4, input_end());
+        __ Add(x3, input_end(), Operand(string_start_minus_one(), SXTW));
+        __ Add(x3, x3, 1);
+      } else {
+        __ Mov(x3, input_end());
+      }
     } else {
       __ Mov(x3, ExternalReference::isolate_address(isolate()));
     }
@@ -445,6 +451,12 @@ void RegExpMacroAssemblerARM64::CheckNotBackReferenceWithOptions(
           : unicode
               ? ExternalReference::re_case_insensitive_compare_unicode()
               : ExternalReference::re_case_insensitive_compare_non_unicode();
+      if (utf8 && read_backward) {
+        function = comparison == BackReferenceComparison::kWtf8
+                      ? ExternalReference::re_compare_wtf8_backward()
+                      : ExternalReference::
+                            re_case_insensitive_compare_wtf8_backward();
+      }
       CallCFunctionFromIrregexpCode(function, argument_count);
     }
 

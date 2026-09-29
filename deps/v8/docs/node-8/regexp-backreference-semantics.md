@@ -19,9 +19,18 @@ expand sharp-s to `ss`.
 Captured values, match positions, capture bounds and `lastIndex` remain byte
 based. Ordinary string equality continues to compare raw bytes.
 
-The forward implementation uses bounded streaming comparison and retains direct
-byte comparison when a bounded compile-time proof establishes that the capture
-has a unique canonical encoding excluding U+FFFD. This is compiler metadata,
-not a new String flag. Forward exact references can also use captures made by
-lookbehind classes. Reverse decoded/folded references remain separate
-implementation work. Functional validation does not imply performance acceptance.
+Both matching directions use bounded streaming comparison. Sensitive references
+retain direct byte comparison when a bounded compile-time proof establishes
+that the capture has a unique canonical encoding excluding U+FFFD. This is
+compiler metadata, not a new String flag.
+
+Backward exact and folded comparisons use the full subject bounds, including
+bytes before a nonzero search origin. They reject an endpoint inside a decoded
+unit and move backward by the actual target byte width. Empty or unmatched
+captures retain their existing zero-width behavior. On `FF 23 E2 82 58`,
+`/(?<=^\1#(.))X/du` captures `E2 82` at [2,4], compares it with the single `FF`
+byte, and matches X at [4,5]. Neither capture bytes nor indices are normalized.
+
+General large property/set classes and malformed patterns remain separate work.
+Functional validation on Linux x64 does not imply performance or other-platform
+acceptance.

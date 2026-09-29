@@ -120,6 +120,92 @@ TEST(Node8Wtf8ExactBackReferenceCompare) {
   i::PrintF("node-8 exact WTF-8 helper: %d checks passed\n", checks);
 }
 
+TEST(Node8Wtf8BackwardBackReferenceCompare) {
+  CcTest::InitializeVM();
+  HandleScope scope(CcTest::isolate());
+  CHECK_EQ(i::v8_flags.utf8_string_semantics ? 2 : 1,
+           v8_str("\xc3\xa9")->Length());
+  int checks = 0;
+  auto check = [&](std::string_view capture, std::string_view target,
+                   size_t position, size_t exact, size_t folded) {
+    CHECK(!capture.empty());
+    CHECK_LE(position, target.size());
+    const i::Address start = reinterpret_cast<i::Address>(target.data());
+    const i::Address captured = reinterpret_cast<i::Address>(capture.data());
+    ++checks;
+    CHECK_EQ(exact, i::RegExpMacroAssembler::CompareWtf8Backward(
+                        captured, start + position, capture.size(), start,
+                        start + target.size()));
+#ifdef V8_INTL_SUPPORT
+    ++checks;
+    CHECK_EQ(folded, i::RegExpMacroAssembler::CaseInsensitiveCompareWtf8Backward(
+                         captured, start + position, capture.size(), start,
+                         start + target.size()));
+#endif
+  };
+  for (char ch = 0; ch < 127; ++ch) check({&ch, 1}, {&ch, 1}, 1, 1, 1);
+  for (char upper = 'A'; upper <= 'Z'; ++upper) {
+    char lower = upper + ('a' - 'A');
+    check({&upper, 1}, {&lower, 1}, 1, 0, 1);
+    check({&lower, 1}, {&upper, 1}, 1, 0, 1);
+  }
+  const std::string_view replacements[] = {
+      "\xff", "\xfe", "\x80", "\xc0", "\xc3", "\xe2", "\xe2\x82",
+      "\xed\xa0", "\xf0", "\xf0\x9f", "\xf0\x9f\x98", "\xef\xbf\xbd"};
+  for (auto capture : replacements) {
+    for (auto target : replacements)
+      check(capture, target, target.size(), target.size(), target.size());
+  }
+  struct Fixture {
+    std::string_view capture, target;
+    size_t position, exact, folded;
+  };
+  const Fixture fixtures[] = {
+      {"[", "{", 1, 0, 0}, {"@", "\x60", 1, 0, 0},
+      {"ab", "a", 1, 0, 0}, {"A", "", 0, 0, 0},
+      {"a", "a", 0, 0, 0}, {"a", "a!", 1, 1, 1},
+      {"b", "ab!", 2, 1, 1}, {"a", "ab", 2, 0, 0},
+      {{"a\0b", 3}, {"!a\0b!", 5}, 4, 3, 3},
+      {"k", "\xe2\x84\xaa!", 3, 0, 3},
+      {"\xe2\x84\xaa", "k!", 1, 0, 1},
+      {"\xc5\xbf", "S!", 1, 0, 1},
+      {"s", "\xc5\xbf!", 2, 0, 2},
+      {"\xc3\xa9", "\xc3\x89!", 2, 0, 2},
+      {"\xcf\x83", "\xcf\x82!", 2, 0, 2},
+      {"\xf0\x90\x90\x80", "\xf0\x90\x90\xa8!", 4, 0, 4},
+      {"\xc3\x9f", "\xe1\xba\x9e!", 3, 0, 3},
+      {"\xc3\x9f", "ss", 2, 0, 0}, {"i", "\xc4\xb0", 2, 0, 0},
+      {"\xed\xa0\x80", "\xed\xa0\x80!", 3, 3, 3},
+      {"\xed\xa0\x80\xed\xb0\x80", "\xf0\x90\x80\x80", 4, 0, 0},
+      {"\xc0\x80", "\xef\xbf\xbd\xff!", 4, 4, 4},
+      {"\xc0\x80", "\xff", 1, 0, 0},
+      {"\xff", "\xc0\x80", 2, 1, 1},
+      {"\xe2\x82", "\xef\xbf\xbd!", 3, 3, 3},
+      {"\xff", "\xe2\x82!", 2, 2, 2},
+      {"\xff", "\xe2\x82!", 1, 0, 0},
+      {"a\xc0\x80", "a\xff\xfe!", 3, 3, 3},
+      {"\xc0\x80", "\xe2\x82!", 2, 0, 0},
+  };
+  for (const auto& f : fixtures)
+    check(f.capture, f.target, f.position, f.exact, f.folded);
+  const std::string_view valid[] = {
+      "\xc3\xa9", "\xe2\x82\xac", "\xf0\x9f\x98\x80", "\xed\xa0\x80"};
+  for (auto target : valid) {
+    for (size_t position = 1; position <= target.size(); ++position)
+      check("\xff", target, position, 0, 0);
+    check(target, target, target.size(), target.size(), target.size());
+  }
+  const std::string captured(4096, 'a'), target(4096, 'A');
+  check(captured, target, 4096, 0, 4096);
+  check(captured, target, 4095, 0, 0);
+#ifdef V8_INTL_SUPPORT
+  CHECK_EQ(740, checks);
+#else
+  CHECK_EQ(370, checks);
+#endif
+  i::PrintF("node-8 backward WTF-8 helper: %d checks passed\n", checks);
+}
+
 namespace {
 
 const char kOneByteSubjectString[] = {

@@ -368,6 +368,12 @@ VISIT(CheckNotBackRef, start_reg, on_not_equal) {
   __ CheckNotBackReference(start_reg, false, on_not_equal);
 }
 
+VISIT(CheckNotBackRefWtf8Backward, start_reg, on_not_equal) {
+  __ CheckNotBackReferenceWithOptions(
+      start_reg, true, RegExpMacroAssembler::BackReferenceComparison::kWtf8,
+      on_not_equal);
+}
+
 VISIT(CheckNotBackRefWtf8, start_reg, on_not_equal) {
   __ CheckNotBackReferenceWithOptions(
       start_reg, false, RegExpMacroAssembler::BackReferenceComparison::kWtf8,

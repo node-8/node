@@ -254,7 +254,7 @@ void RegExpMacroAssemblerX64::CheckNotBackReferenceWithOptions(
     int start_reg, bool read_backward, BackReferenceComparison comparison,
     Label* on_no_match) {
   const bool unicode = comparison != BackReferenceComparison::kIgnoreCase;
-  const bool utf8 = UseUtf8BackReference(comparison, read_backward);
+  const bool utf8 = UseUtf8BackReference(comparison);
   DCHECK(comparison != BackReferenceComparison::kWtf8 || utf8);
   Label fallthrough;
   ReadPositionFromRegister(rdx, start_reg);  // Offset of start of capture
@@ -274,7 +274,7 @@ void RegExpMacroAssemblerX64::CheckNotBackReferenceWithOptions(
   // rdx - Start of capture
   // rcx - length of capture
   // Check that there are sufficient characters left in the input.
-  // UTF-8 folds can consume fewer bytes than the capture.
+  // Decoded WTF-8 matches can consume fewer bytes than the capture.
   if (!utf8) {
     if (read_backward) {
       __ movl(rax, Operand(rbp, kStringStartMinusOneOffset));
@@ -350,7 +350,7 @@ void RegExpMacroAssemblerX64::CheckNotBackReferenceWithOptions(
     DCHECK(mode() == UC16 || utf8);
     PushCallerSavedRegisters();
 
-    static const int num_arguments = 4;
+    const int num_arguments = utf8 && read_backward ? 5 : 4;
     __ PrepareCallCFunction(num_arguments);
 
     static const Register kSavedByteLength = r12;
@@ -372,7 +372,7 @@ void RegExpMacroAssemblerX64::CheckNotBackReferenceWithOptions(
     __ leaq(rcx, Operand(rsi, rdx, times_1, 0));
     // Set byte_offset2.
     __ leaq(rdx, Operand(rsi, rdi, times_1, 0));
-    if (read_backward) {
+    if (read_backward && !utf8) {
       __ subq(rdx, r8);
     }
 #else  // AMD64 calling convention
@@ -389,14 +389,25 @@ void RegExpMacroAssemblerX64::CheckNotBackReferenceWithOptions(
             rcx);  // Save byte_length in callee-saved register.
     // Set byte_offset2.
     __ movq(rsi, rax);
-    if (read_backward) {
+    if (read_backward && !utf8) {
       __ subq(rsi, rdx);
     }
 #endif  // V8_TARGET_OS_WIN
 
-    // Isolate.
+    // Isolate, or physical WTF-8 input bounds.
     if (utf8) {
-      __ movq(kCArgRegs[3], Operand(rbp, kInputEndOffset));
+      if (read_backward) {
+        __ movq(rax, Operand(rbp, kInputEndOffset));
+#ifdef V8_TARGET_OS_WIN
+        __ movq(Operand(rsp, 4 * kSystemPointerSize), rax);
+#else
+        __ movq(r8, rax);
+#endif
+        __ movq(kCArgRegs[3], Operand(rbp, kStringStartMinusOneOffset));
+        __ leaq(kCArgRegs[3], Operand(rax, kCArgRegs[3], times_1, 1));
+      } else {
+        __ movq(kCArgRegs[3], Operand(rbp, kInputEndOffset));
+      }
     } else {
       __ LoadAddress(kCArgRegs[3],
                      ExternalReference::isolate_address(isolate()));
@@ -411,6 +422,12 @@ void RegExpMacroAssemblerX64::CheckNotBackReferenceWithOptions(
           : unicode
               ? ExternalReference::re_case_insensitive_compare_unicode()
               : ExternalReference::re_case_insensitive_compare_non_unicode();
+      if (utf8 && read_backward) {
+        compare = comparison == BackReferenceComparison::kWtf8
+                      ? ExternalReference::re_compare_wtf8_backward()
+                      : ExternalReference::
+                            re_case_insensitive_compare_wtf8_backward();
+      }
       CallCFunctionFromIrregexpCode(compare, num_arguments);
     }
 
@@ -423,7 +440,7 @@ void RegExpMacroAssemblerX64::CheckNotBackReferenceWithOptions(
     BranchOrBacktrack(zero, on_no_match);
     // On success, advance position by length of capture.
     if (read_backward) {
-      __ subq(rdi, kSavedByteLength);
+      __ subq(rdi, utf8 ? rax : kSavedByteLength);
     } else {
       __ addq(rdi, utf8 ? rax : kSavedByteLength);
     }

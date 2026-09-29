@@ -102,15 +102,87 @@ void RegExpMacroAssembler::AdvanceUtf8Position() {
 }
 
 bool RegExpMacroAssembler::UseUtf8BackReference(
-    BackReferenceComparison comparison, bool read_backward) const {
+    BackReferenceComparison comparison) const {
 #ifndef V8_INTL_SUPPORT
   if (comparison != BackReferenceComparison::kWtf8) return false;
 #endif
   return v8_flags.utf8_string_semantics && mode() == LATIN1 &&
-         comparison != BackReferenceComparison::kIgnoreCase && !read_backward;
+         comparison != BackReferenceComparison::kIgnoreCase;
 }
 
 namespace {
+template <bool ignore_case>
+bool SameWtf8Character(uint32_t left, uint32_t right) {
+  if (left == right) return true;
+  if constexpr (!ignore_case) return false;
+  if (left <= 0x7f && right <= 0x7f) {
+    left |= 0x20;
+    right |= 0x20;
+    return left == right && left - 'a' <= 'z' - 'a';
+  }
+#ifdef V8_INTL_SUPPORT
+  return u_foldCase(left, U_FOLD_CASE_DEFAULT) ==
+         u_foldCase(right, U_FOLD_CASE_DEFAULT);
+#else
+  UNREACHABLE();
+#endif
+}
+
+// Find the preceding unit of the forward partition without truncating its
+// physical input. A position inside a valid or maximal malformed unit fails.
+bool DecodePreviousWtf8(base::Vector<const uint8_t> bytes, size_t* position,
+                        uint32_t* code_point) {
+  if (*position == 0) return false;
+  size_t start = *position - 1;
+  if (bytes[start] <= 0x7f) {
+    *code_point = bytes[start];
+    *position = start;
+    return true;
+  }
+  while (start > 0 && *position - start < 4 &&
+         (bytes[start] & 0xc0) == 0x80) {
+    --start;
+  }
+  Wtf8ByteCursor cursor(bytes, Wtf8ByteCursor::Policy::kInternalWtf8, start);
+  auto decoded = cursor.DecodeNext();
+  if (cursor.position() > *position) return false;
+  if (cursor.position() < *position) {
+    // The candidate did not reach the last byte: that byte is an independent
+    // continuation, outside the candidate's valid or maximal malformed unit.
+    start = *position - 1;
+    DCHECK_EQ(bytes[start] & 0xc0, 0x80);
+    *code_point = 0xfffd;
+  } else {
+    *code_point = decoded.code_point;
+  }
+  *position = start;
+  return true;
+}
+
+template <bool ignore_case>
+size_t CompareWtf8StreamsBackward(Address capture, Address current,
+                                 size_t capture_length, Address start,
+                                 Address end) {
+  DisallowGarbageCollection no_gc;
+  DCHECK_GT(capture_length, 0);
+  DCHECK_GE(current, start);
+  DCHECK_LE(current, end);
+  base::Vector<const uint8_t> captured(
+      reinterpret_cast<const uint8_t*>(capture), capture_length);
+  base::Vector<const uint8_t> target(reinterpret_cast<const uint8_t*>(start),
+                                   end - start);
+  size_t capture_position = capture_length, target_position = current - start;
+  while (capture_position > 0) {
+    uint32_t left, right;
+    if (!DecodePreviousWtf8(captured, &capture_position, &left) ||
+        !DecodePreviousWtf8(target, &target_position, &right) ||
+        !SameWtf8Character<ignore_case>(left, right)) {
+      return 0;
+    }
+  }
+  return current - start - target_position;
+}
+
 template <bool ignore_case>
 size_t CompareWtf8Streams(Address capture, Address current,
                           size_t capture_length, Address end) {
@@ -140,25 +212,29 @@ size_t CompareWtf8Streams(Address capture, Address current,
       right = cursor.DecodeNext().code_point;
       target_position = cursor.position();
     }
-    if (left == right) continue;
-    if constexpr (!ignore_case) return 0;
-    if (left <= 0x7f && right <= 0x7f) {
-      left |= 0x20;
-      right |= 0x20;
-      if (left != right || left - 'a' > 'z' - 'a') return 0;
-    } else {
-#ifdef V8_INTL_SUPPORT
-      if (u_foldCase(left, U_FOLD_CASE_DEFAULT) !=
-          u_foldCase(right, U_FOLD_CASE_DEFAULT))
-        return 0;
-#else
-      UNREACHABLE();
-#endif
-    }
+    if (!SameWtf8Character<ignore_case>(left, right)) return 0;
   }
   return target_position;
 }
 }  // namespace
+
+size_t RegExpMacroAssembler::CompareWtf8Backward(
+    Address capture, Address current, size_t capture_length, Address start,
+    Address end) {
+  return CompareWtf8StreamsBackward<false>(capture, current, capture_length,
+                                         start, end);
+}
+
+size_t RegExpMacroAssembler::CaseInsensitiveCompareWtf8Backward(
+    Address capture, Address current, size_t capture_length, Address start,
+    Address end) {
+#ifdef V8_INTL_SUPPORT
+  return CompareWtf8StreamsBackward<true>(capture, current, capture_length,
+                                        start, end);
+#else
+  UNREACHABLE();
+#endif
+}
 
 size_t RegExpMacroAssembler::CompareWtf8(Address capture, Address current,
                                          size_t capture_length, Address end) {
