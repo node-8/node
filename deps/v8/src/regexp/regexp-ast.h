@@ -751,6 +751,8 @@ class RegExpBackReference final : public RegExpTree {
   // recursion, we give up. Ignorance is bliss.
   int max_match() override { return kInfinity; }
   const ZoneList<RegExpCapture*>* captures() const { return &captures_; }
+  bool node8_wtf8() const { return node8_wtf8_; }
+  void set_node8_wtf8() { node8_wtf8_ = true; }
   void add_capture(RegExpCapture* capture, Zone* zone) {
     captures_.Add(capture, zone);
   }
@@ -759,6 +761,7 @@ class RegExpBackReference final : public RegExpTree {
 
  private:
   ZoneList<RegExpCapture*> captures_;
+  bool node8_wtf8_ = false;
   const ZoneVector<base::uc16>* name_ = nullptr;
 };
 

@@ -625,28 +625,18 @@ RegExpTree* UnwrapCaptureChain(RegExpTree* tree, int* capture_count) {
   return tree;
 }
 
-#ifdef V8_INTL_SUPPORT
-RegExpTree* GetNode8ComposedLiteralByteTree(RegExpTree* tree, RegExpFlags flags,
-                                          Zone* zone,
-                                          Node8ComposedState* state, int depth);
-
-struct Node8CaseFoldState {
-  bool used_extended_syntax = false;
-  bool needs_byte_lowering = false;
-  Node8ComposedState classes;
-};
-
-// Retain the old byte comparison only when every possible captured byte has a
-// closed ASCII fold. In particular, case-sensitive k/s captures can still be
-// referenced against Kelvin/long-s under a later i scope. Bound compile work;
-// unknown or recursive capture bodies conservatively use Unicode comparison.
-bool Node8CaptureHasClosedAsciiFolds(RegExpTree* tree, Zone* zone,
-                                     int* budget) {
+// Exact replay is safe for canonical captures excluding U+FFFD. Folding also
+// needs a closed ASCII alphabet (k/s can match Kelvin/long-s). Bound total
+// work; unknown and recursive captures conservatively use Unicode comparison.
+bool Node8CaptureCanUseByteComparison(RegExpTree* tree, Zone* zone, int* budget,
+                                      bool ignore_case) {
   if (--*budget < 0) return false;
   if (tree->IsAtom()) {
     for (base::uc16 unit : tree->AsAtom()->data()) {
       if (--*budget < 0) return false;
-      if (unit > 0x7f || (unit | 0x20) == 'k' || (unit | 0x20) == 's') {
+      if (unit == unibrow::Utf8::kBadChar ||
+          (ignore_case &&
+           (unit > 0x7f || (unit | 0x20) == 'k' || (unit | 0x20) == 's'))) {
         return false;
       }
     }
@@ -657,8 +647,10 @@ bool Node8CaptureHasClosedAsciiFolds(RegExpTree* tree, Zone* zone,
     if (character_class->is_negated()) return false;
     for (CharacterRange range : *character_class->ranges(zone)) {
       if (--*budget < 0) return false;
-      if (range.to() > 0x7f || range.Contains('k') || range.Contains('K') ||
-          range.Contains('s') || range.Contains('S')) {
+      if (range.Contains(unibrow::Utf8::kBadChar) ||
+          (ignore_case &&
+           (range.to() > 0x7f || range.Contains('k') || range.Contains('K') ||
+            range.Contains('s') || range.Contains('S')))) {
         return false;
       }
     }
@@ -667,20 +659,21 @@ bool Node8CaptureHasClosedAsciiFolds(RegExpTree* tree, Zone* zone,
   if (tree->IsEmpty() || tree->IsAssertion() || tree->IsLookaround())
     return true;
   if (tree->IsCapture()) {
-    return Node8CaptureHasClosedAsciiFolds(tree->AsCapture()->body(), zone,
-                                           budget);
+    return Node8CaptureCanUseByteComparison(tree->AsCapture()->body(), zone,
+                                            budget, ignore_case);
   }
   if (tree->IsGroup()) {
-    return Node8CaptureHasClosedAsciiFolds(tree->AsGroup()->body(), zone,
-                                           budget);
+    return Node8CaptureCanUseByteComparison(tree->AsGroup()->body(), zone,
+                                            budget, ignore_case);
   }
   if (tree->IsQuantifier()) {
-    return Node8CaptureHasClosedAsciiFolds(tree->AsQuantifier()->body(), zone,
-                                           budget);
+    return Node8CaptureCanUseByteComparison(tree->AsQuantifier()->body(), zone,
+                                            budget, ignore_case);
   }
   if (tree->IsText()) {
     for (const auto& element : *tree->AsText()->elements()) {
-      if (!Node8CaptureHasClosedAsciiFolds(element.tree(), zone, budget)) {
+      if (!Node8CaptureCanUseByteComparison(element.tree(), zone, budget,
+                                            ignore_case)) {
         return false;
       }
     }
@@ -691,12 +684,25 @@ bool Node8CaptureHasClosedAsciiFolds(RegExpTree* tree, Zone* zone,
                          ? tree->AsAlternative()->nodes()
                          : tree->AsDisjunction()->alternatives();
     for (auto* child : *children) {
-      if (!Node8CaptureHasClosedAsciiFolds(child, zone, budget)) return false;
+      if (!Node8CaptureCanUseByteComparison(child, zone, budget, ignore_case))
+        return false;
     }
     return true;
   }
   return false;
 }
+
+#ifdef V8_INTL_SUPPORT
+RegExpTree* GetNode8ComposedLiteralByteTree(RegExpTree* tree, RegExpFlags flags,
+                                            Zone* zone,
+                                            Node8ComposedState* state,
+                                            int depth);
+
+struct Node8CaseFoldState {
+  bool used_extended_syntax = false;
+  bool needs_byte_lowering = false;
+  Node8ComposedState classes;
+};
 
 bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags, Zone* zone,
                                  ZoneList<RegExpTree*>* output,
@@ -910,7 +916,8 @@ bool AppendNode8CaseFoldedLiteral(RegExpTree* tree, RegExpFlags flags, Zone* zon
     state->classes.contains_folded_backreference = true;
     int budget = 100;
     for (auto* capture : *tree->AsBackReference()->captures()) {
-      if (!Node8CaptureHasClosedAsciiFolds(capture->body(), zone, &budget)) {
+      if (!Node8CaptureCanUseByteComparison(capture->body(), zone, &budget,
+                                            true)) {
         state->needs_byte_lowering = true;
         break;
       }
@@ -1135,7 +1142,21 @@ RegExpTree* GetNode8ComposedLiteralByteTree(RegExpTree* tree, RegExpFlags flags,
   if (tree->IsEmpty()) return tree;
   if (tree->IsBackReference()) {
     state->contains_backreference = true;
-    return tree;
+    auto* reference = tree->AsBackReference();
+    int budget = 100;
+    bool byte_comparison = true;
+    for (auto* capture : *reference->captures()) {
+      byte_comparison &= Node8CaptureCanUseByteComparison(capture->body(), zone,
+                                                          &budget, false);
+      if (!byte_comparison) break;
+    }
+    if (byte_comparison) return tree;
+    auto* result = zone->New<RegExpBackReference>(zone);
+    for (auto* capture : *reference->captures())
+      result->add_capture(capture, zone);
+    result->set_name(reference->name());
+    result->set_node8_wtf8();
+    return result;
   }
   if (tree->IsAssertion()) {
     auto type = tree->AsAssertion()->assertion_type();
@@ -3071,8 +3092,7 @@ bool RegExpImpl::CompileIrregexpFromSource(
           state.contains_folded_backreference) &&
          original_tree->min_match() == 0);
     if (byte_tree != nullptr &&
-        !(state.contains_decoder &&
-          (state.contains_lookbehind || state.contains_backreference)) &&
+        !(state.contains_decoder && state.contains_lookbehind) &&
         !(state.contains_forward_dispatch && state.contains_lookbehind) &&
         !(state.contains_folded_backreference && state.contains_lookbehind) &&
         (byte_tree != original_tree || scalar_search) &&
@@ -3098,8 +3118,6 @@ bool RegExpImpl::CompileIrregexpFromSource(
                                  state.classes.contains_folded_backreference) &&
                                 original_tree->min_match() == 0);
     if (lowered && !literals.is_empty() &&
-        !(state.classes.contains_decoder &&
-          state.classes.contains_backreference) &&
         !(state.classes.contains_lookbehind &&
           (state.classes.contains_decoder ||
            state.classes.contains_forward_dispatch ||

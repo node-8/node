@@ -897,6 +897,27 @@ IrregexpInterpreter::Result RawMatch(
       ADVANCE();
       DISPATCH();
     }
+    BYTECODE(CheckNotBackRefWtf8, start_reg, on_not_equal) {
+      if constexpr (std::is_same_v<Char, uint8_t>) {
+        int from = registers[start_reg];
+        int len = registers[start_reg + 1] - from;
+        if (from >= 0 && len > 0) {
+          int consumed = static_cast<int>(RegExpMacroAssembler::CompareWtf8(
+              reinterpret_cast<Address>(subject.begin() + from),
+              reinterpret_cast<Address>(subject.begin() + current), len,
+              reinterpret_cast<Address>(subject.end())));
+          if (consumed == 0) {
+            SET_PC_FROM_OFFSET(on_not_equal);
+            DISPATCH();
+          }
+          ADVANCE_CURRENT_POSITION(consumed);
+        }
+        ADVANCE();
+        DISPATCH();
+      } else {
+        UNREACHABLE();
+      }
+    }
     BYTECODE(CheckNotBackRefBackward, start_reg, on_not_equal) {
       int from = registers[start_reg];
       int len = registers[start_reg + 1] - from;

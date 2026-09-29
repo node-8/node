@@ -1372,7 +1372,7 @@ RegExpNode* RegExpBackReference::ToNodeImpl(RegExpCompiler* compiler,
     backref_node = compiler->zone()->New<BackReferenceNode>(
         RegExpCapture::StartRegister(capture->index()),
         RegExpCapture::EndRegister(capture->index()), compiler->read_backward(),
-        backref_node);
+        backref_node, node8_wtf8());
     REGISTER_NODE(backref_node);
   }
   return backref_node;

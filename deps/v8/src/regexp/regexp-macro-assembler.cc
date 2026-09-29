@@ -101,21 +101,19 @@ void RegExpMacroAssembler::AdvanceUtf8Position() {
   Bind(&done);
 }
 
-bool RegExpMacroAssembler::UseUtf8BackReference(bool unicode,
-                                                bool read_backward) const {
-#ifdef V8_INTL_SUPPORT
-  return v8_flags.utf8_string_semantics && mode() == LATIN1 && unicode &&
-         !read_backward;
-#else
-  return false;
+bool RegExpMacroAssembler::UseUtf8BackReference(
+    BackReferenceComparison comparison, bool read_backward) const {
+#ifndef V8_INTL_SUPPORT
+  if (comparison != BackReferenceComparison::kWtf8) return false;
 #endif
+  return v8_flags.utf8_string_semantics && mode() == LATIN1 &&
+         comparison != BackReferenceComparison::kIgnoreCase && !read_backward;
 }
 
-size_t RegExpMacroAssembler::CaseInsensitiveCompareWtf8(Address capture,
-                                                        Address current,
-                                                        size_t capture_length,
-                                                        Address end) {
-#ifdef V8_INTL_SUPPORT
+namespace {
+template <bool ignore_case>
+size_t CompareWtf8Streams(Address capture, Address current,
+                          size_t capture_length, Address end) {
   DisallowGarbageCollection no_gc;
   DCHECK_GT(capture_length, 0);
   if (current >= end) return 0;
@@ -143,16 +141,36 @@ size_t RegExpMacroAssembler::CaseInsensitiveCompareWtf8(Address capture,
       target_position = cursor.position();
     }
     if (left == right) continue;
+    if constexpr (!ignore_case) return 0;
     if (left <= 0x7f && right <= 0x7f) {
       left |= 0x20;
       right |= 0x20;
       if (left != right || left - 'a' > 'z' - 'a') return 0;
-    } else if (u_foldCase(left, U_FOLD_CASE_DEFAULT) !=
-               u_foldCase(right, U_FOLD_CASE_DEFAULT)) {
-      return 0;
+    } else {
+#ifdef V8_INTL_SUPPORT
+      if (u_foldCase(left, U_FOLD_CASE_DEFAULT) !=
+          u_foldCase(right, U_FOLD_CASE_DEFAULT))
+        return 0;
+#else
+      UNREACHABLE();
+#endif
     }
   }
   return target_position;
+}
+}  // namespace
+
+size_t RegExpMacroAssembler::CompareWtf8(Address capture, Address current,
+                                         size_t capture_length, Address end) {
+  return CompareWtf8Streams<false>(capture, current, capture_length, end);
+}
+
+size_t RegExpMacroAssembler::CaseInsensitiveCompareWtf8(Address capture,
+                                                        Address current,
+                                                        size_t capture_length,
+                                                        Address end) {
+#ifdef V8_INTL_SUPPORT
+  return CompareWtf8Streams<true>(capture, current, capture_length, end);
 #else
   UNREACHABLE();
 #endif

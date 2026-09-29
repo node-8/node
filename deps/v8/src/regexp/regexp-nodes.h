@@ -658,11 +658,12 @@ class AssertionNode : public SeqRegExpNode {
 class BackReferenceNode : public SeqRegExpNode {
  public:
   BackReferenceNode(int start_reg, int end_reg, bool read_backward,
-                    RegExpNode* on_success)
+                    RegExpNode* on_success, bool node8_wtf8 = false)
       : SeqRegExpNode(on_success),
         start_reg_(start_reg),
         end_reg_(end_reg),
-        read_backward_(read_backward) {}
+        read_backward_(read_backward),
+        node8_wtf8_(node8_wtf8) {}
   BackReferenceNode* AsBackReferenceNode() override { return this; }
   void Accept(NodeVisitor* visitor) override;
   int start_register() const { return start_reg_; }
@@ -682,6 +683,7 @@ class BackReferenceNode : public SeqRegExpNode {
   int start_reg_;
   int end_reg_;
   bool read_backward_;
+  bool node8_wtf8_;
 };
 
 class EndNode : public RegExpNode {

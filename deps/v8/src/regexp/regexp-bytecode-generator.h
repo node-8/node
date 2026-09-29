@@ -203,9 +203,9 @@ class V8_EXPORT_PRIVATE RegExpBytecodeGenerator : public RegExpMacroAssembler,
   void SkipUntilOneOfMasked3(const SkipUntilOneOfMasked3Args& args) override;
   void CheckNotBackReference(int start_reg, bool read_backward,
                              Label* on_no_match) override;
-  void CheckNotBackReferenceIgnoreCase(int start_reg, bool read_backward,
-                                       bool unicode,
-                                       Label* on_no_match) override;
+  void CheckNotBackReferenceWithOptions(int start_reg, bool read_backward,
+                                        BackReferenceComparison comparison,
+                                        Label* on_no_match) override;
   void IfRegisterLT(int register_index, int comparand,
                     Label* on_less_than) override;
   void IfRegisterGE(int register_index, int comparand,

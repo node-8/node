@@ -126,7 +126,7 @@
       [[0,4],[0,2]],[[0,2],[0,1]],'all',''),
     row('nested-flags','^(?-i:(?i:('+e+')\\1))$',join(E,EC),[join(E,EC),E],
       [[0,4],[0,2]],[[0,2],[0,1]]),
-    row('excluded-decoder','^(.)\\1$',pair,[pair,E],[[0,4],[0,2]],[[0,2],[0,1]],'stock'),
+    row('excluded-decoder','^(.)\\1$',pair,[pair,E],[[0,4],[0,2]],[[0,2],[0,1]]),
     row('excluded-reverse','(?<=('+e+')\\1)('+c+')',join(pair,C),[C,E,C],
       [[4,7],[2,4],[4,7]],[[2,3],[1,2],[2,3]],'stock'),
     row('empty-root','()\\1',join(C,E),[empty,empty],[[0,0],[0,0]],[[0,0],[0,0]])

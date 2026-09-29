@@ -73,6 +73,53 @@ TEST(Node8Wtf8ForwardBackReferenceCompare) {
 }
 #endif  // V8_INTL_SUPPORT
 
+TEST(Node8Wtf8ExactBackReferenceCompare) {
+  CcTest::InitializeVM();
+  HandleScope scope(CcTest::isolate());
+  CHECK_EQ(i::v8_flags.utf8_string_semantics ? 2 : 1,
+           v8_str("\xc3\xa9")->Length());
+  int checks = 0;
+  auto check = [&](std::string_view capture, std::string_view target,
+                   size_t expected) {
+    ++checks;
+    const i::Address begin = reinterpret_cast<i::Address>(target.data());
+    CHECK_EQ(expected, i::RegExpMacroAssembler::CompareWtf8(
+                           reinterpret_cast<i::Address>(capture.data()), begin,
+                           capture.size(), begin + target.size()));
+  };
+  for (char ch = 0; ch < 127; ++ch) {
+    check({&ch, 1}, {&ch, 1}, 1);
+  }
+  check("a", "A", 0);
+  check("k", "\xe2\x84\xaa", 0);
+  check("\xc3\xa9", "\xc3\x89", 0);
+  check("\xc3\xa9", "\xc3\xa9!", 2);
+  check("\xf0\x9f\x98\x80", "\xf0\x9f\x98\x80!", 4);
+  check("a", "", 0);
+  check("ab", "a", 0);
+  check({"a\0b", 3}, {"a\0b!", 4}, 3);
+  const std::string_view replacements[] = {
+      "\xff",     "\xfe", "\x80",     "\xc0",         "\xc3",        "\xe2",
+      "\xe2\x82", "\xf0", "\xf0\x9f", "\xf0\x9f\x98", "\xef\xbf\xbd"};
+  for (auto capture : replacements) {
+    for (auto target : replacements) check(capture, target, target.size());
+  }
+  check("\xc3", "\xc3\xa9", 0);
+  check("\xe2\x82", "\xe2\x82\xac", 0);
+  check("\xf0\x9f\x98", "\xf0\x9f\x98\x80", 0);
+  check("\xff", "\xed\xa0\x80", 0);
+  check("\xed\xa0\x80", "\xff", 0);
+  check("\xed\xa0\x80", "\xed\xa0\x80!", 3);
+  check("\xc0\x80", "\xef\xbf\xbd\xff!", 4);
+  check("\xc0\x80", "\xff", 0);
+  check("\xff", "\xc0\x80", 1);
+  const std::string capture(4096, 'a');
+  check(capture, capture, 4096);
+  check(capture, std::string_view(capture).substr(0, 4095), 0);
+  CHECK_EQ(267, checks);
+  i::PrintF("node-8 exact WTF-8 helper: %d checks passed\n", checks);
+}
+
 namespace {
 
 const char kOneByteSubjectString[] = {

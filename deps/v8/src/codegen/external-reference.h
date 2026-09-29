@@ -474,6 +474,7 @@ enum class IsolateFieldId : uint8_t;
           "tsan_relaxed_load_function_64_bits")                                \
   V(re_case_insensitive_compare_unicode,                                       \
     "RegExpMacroAssembler::CaseInsensitiveCompareUnicode()")                   \
+  V(re_compare_wtf8, "RegExpMacroAssembler::CompareWtf8")                      \
   V(re_case_insensitive_compare_wtf8,                                         \
     "RegExpMacroAssembler::CaseInsensitiveCompareWtf8()")                       \
   V(re_case_insensitive_compare_non_unicode,                                   \

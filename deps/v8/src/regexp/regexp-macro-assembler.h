@@ -85,9 +85,18 @@ class RegExpMacroAssembler {
   virtual void CheckNotAtStart(int cp_offset, Label* on_not_at_start) = 0;
   virtual void CheckNotBackReference(int start_reg, bool read_backward,
                                      Label* on_no_match) = 0;
-  virtual void CheckNotBackReferenceIgnoreCase(int start_reg,
-                                               bool read_backward, bool unicode,
-                                               Label* on_no_match) = 0;
+  enum class BackReferenceComparison { kIgnoreCase, kUnicodeIgnoreCase, kWtf8 };
+  virtual void CheckNotBackReferenceWithOptions(
+      int start_reg, bool read_backward, BackReferenceComparison comparison,
+      Label* on_no_match) = 0;
+  void CheckNotBackReferenceIgnoreCase(int start_reg, bool read_backward,
+                                       bool unicode, Label* on_no_match) {
+    CheckNotBackReferenceWithOptions(
+        start_reg, read_backward,
+        unicode ? BackReferenceComparison::kUnicodeIgnoreCase
+                : BackReferenceComparison::kIgnoreCase,
+        on_no_match);
+  }
   // Check the current character for a match with a literal character.  If we
   // fail to match then goto the on_failure label.  End of input always
   // matches.  If the label is nullptr then we should pop a backtrack address
@@ -275,9 +284,13 @@ class RegExpMacroAssembler {
                                            size_t byte_length,
                                            Isolate* isolate);
 
-  bool UseUtf8BackReference(bool unicode, bool read_backward) const;
+  bool UseUtf8BackReference(BackReferenceComparison comparison,
+                            bool read_backward) const;
   // Compare a nonempty capture against a bounded forward WTF-8 stream.
   // Return consumed target bytes, or zero on mismatch. Does not allocate.
+  V8_EXPORT_PRIVATE static size_t CompareWtf8(Address capture, Address current,
+                                              size_t capture_length,
+                                              Address end);
   V8_EXPORT_PRIVATE static size_t CaseInsensitiveCompareWtf8(
       Address capture, Address current, size_t capture_length, Address end);
 

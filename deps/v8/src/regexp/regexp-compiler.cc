@@ -3920,6 +3920,12 @@ EmitResult BackReferenceNode::Emit(RegExpCompiler* compiler, Trace* trace) {
     bool unicode = IsEitherUnicode(compiler->flags());
     assembler->CheckNotBackReferenceIgnoreCase(start_reg_, read_backward(),
                                                unicode, trace->backtrack());
+  } else if (node8_wtf8_ && !read_backward()) {
+    // Decoder/lookbehind roots remain excluded by the lowering pass. Keep
+    // previously supported reverse canonical references on their byte path.
+    assembler->CheckNotBackReferenceWithOptions(
+        start_reg_, false, RegExpMacroAssembler::BackReferenceComparison::kWtf8,
+        trace->backtrack());
   } else {
     assembler->CheckNotBackReference(start_reg_, read_backward(),
                                      trace->backtrack());

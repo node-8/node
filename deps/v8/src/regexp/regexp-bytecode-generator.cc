@@ -542,8 +542,16 @@ void RegExpBytecodeGenerator::CheckNotBackReference(int start_reg,
   }
 }
 
-void RegExpBytecodeGenerator::CheckNotBackReferenceIgnoreCase(
-    int start_reg, bool read_backward, bool unicode, Label* on_not_equal) {
+void RegExpBytecodeGenerator::CheckNotBackReferenceWithOptions(
+    int start_reg, bool read_backward, BackReferenceComparison comparison,
+    Label* on_not_equal) {
+  if (comparison == BackReferenceComparison::kWtf8) {
+    DCHECK(!read_backward);
+    Emit<RegExpBytecode::kCheckNotBackRefWtf8>(start_reg, on_not_equal);
+    return;
+  }
+  const bool unicode =
+      comparison == BackReferenceComparison::kUnicodeIgnoreCase;
   if (read_backward) {
     if (unicode) {
       Emit<RegExpBytecode::kCheckNotBackRefNoCaseUnicodeBackward>(start_reg,

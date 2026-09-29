@@ -215,6 +215,8 @@ using ReBcFlag = RegExpBytecodeFlag;
   /* Bytecode without increasing the size */                                   \
   V(CheckNotBackRef, (start_reg, on_not_equal),                                \
     (ReBcOpType::kRegister, ReBcOpType::kJumpTarget), ())                      \
+  V(CheckNotBackRefWtf8, (start_reg, on_not_equal),                                \
+    (ReBcOpType::kRegister, ReBcOpType::kJumpTarget), ())                      \
   V(CheckNotBackRefNoCase, (start_reg, on_not_equal),                          \
     (ReBcOpType::kRegister, ReBcOpType::kJumpTarget), ())                      \
   V(CheckNotBackRefNoCaseUnicode, (start_reg, on_not_equal),                   \

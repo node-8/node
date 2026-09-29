@@ -39,9 +39,9 @@ class V8_EXPORT_PRIVATE RegExpMacroAssemblerARM64
   void CheckNotAtStart(int cp_offset, Label* on_not_at_start) override;
   void CheckNotBackReference(int start_reg, bool read_backward,
                              Label* on_no_match) override;
-  void CheckNotBackReferenceIgnoreCase(int start_reg, bool read_backward,
-                                       bool unicode,
-                                       Label* on_no_match) override;
+  void CheckNotBackReferenceWithOptions(int start_reg, bool read_backward,
+                                        BackReferenceComparison comparison,
+                                        Label* on_no_match) override;
   void CheckNotCharacter(unsigned c, Label* on_not_equal) override;
   void CheckNotCharacterAfterAnd(unsigned c, unsigned mask,
                                  Label* on_not_equal) override;

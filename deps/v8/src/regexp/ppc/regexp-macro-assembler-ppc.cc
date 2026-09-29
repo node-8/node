@@ -241,9 +241,12 @@ void RegExpMacroAssemblerPPC::CheckFixedLengthLoop(Label* on_equal) {
   BranchOrBacktrack(eq, on_equal);
 }
 
-void RegExpMacroAssemblerPPC::CheckNotBackReferenceIgnoreCase(
-    int start_reg, bool read_backward, bool unicode, Label* on_no_match) {
-  const bool utf8 = UseUtf8BackReference(unicode, read_backward);
+void RegExpMacroAssemblerPPC::CheckNotBackReferenceWithOptions(
+    int start_reg, bool read_backward, BackReferenceComparison comparison,
+    Label* on_no_match) {
+  const bool unicode = comparison != BackReferenceComparison::kIgnoreCase;
+  const bool utf8 = UseUtf8BackReference(comparison, read_backward);
+  DCHECK(comparison != BackReferenceComparison::kWtf8 || utf8);
   Label fallthrough;
   __ LoadU64(r3, register_location(start_reg),
              r0);  // Index of start of capture
@@ -366,7 +369,9 @@ void RegExpMacroAssemblerPPC::CheckNotBackReferenceIgnoreCase(
     {
       AllowExternalCallThatCantCauseGC scope(masm_.get());
       ExternalReference function =
-          utf8 ? ExternalReference::re_case_insensitive_compare_wtf8()
+          utf8 ? (comparison == BackReferenceComparison::kWtf8
+                      ? ExternalReference::re_compare_wtf8()
+                      : ExternalReference::re_case_insensitive_compare_wtf8())
           : unicode
               ? ExternalReference::re_case_insensitive_compare_unicode()
               : ExternalReference::re_case_insensitive_compare_non_unicode();

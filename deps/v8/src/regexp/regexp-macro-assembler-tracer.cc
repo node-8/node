@@ -552,13 +552,16 @@ void RegExpMacroAssemblerTracer::CheckNotBackReference(int start_reg,
   assembler_->CheckNotBackReference(start_reg, read_backward, on_no_match);
 }
 
-void RegExpMacroAssemblerTracer::CheckNotBackReferenceIgnoreCase(
-    int start_reg, bool read_backward, bool unicode, Label* on_no_match) {
-  PrintF(" CheckNotBackReferenceIgnoreCase(register=%d, %s %s, label[%08x]);\n",
-         start_reg, read_backward ? "backward" : "forward",
-         unicode ? "unicode" : "non-unicode", LabelToInt(on_no_match));
-  assembler_->CheckNotBackReferenceIgnoreCase(start_reg, read_backward, unicode,
-                                              on_no_match);
+void RegExpMacroAssemblerTracer::CheckNotBackReferenceWithOptions(
+    int start_reg, bool read_backward, BackReferenceComparison comparison,
+    Label* on_no_match) {
+  PrintF(
+      " CheckNotBackReferenceWithOptions(register=%d, backward=%d, mode=%d, "
+      "label[%08x]);\n",
+      start_reg, read_backward, static_cast<int>(comparison),
+      LabelToInt(on_no_match));
+  assembler_->CheckNotBackReferenceWithOptions(start_reg, read_backward,
+                                               comparison, on_no_match);
 }
 
 void RegExpMacroAssemblerTracer::CheckPosition(int cp_offset,
